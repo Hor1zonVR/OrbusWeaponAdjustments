@@ -19,7 +19,7 @@ public sealed class LiveAdjustmentCapture : MonoBehaviour
 
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int key);
-    private const int Ctrl = 0x11, Alt = 0x12, R = 0x52;
+    private const int Ctrl = 0x11, Alt = 0x12, R = 0x52, M = 0x4D;
     private const int MaxEvents = 3500, MaxWatched = 110, MaxScan = 30000;
     private const float Timeout = 90f;
     private static readonly string[] Terms =
@@ -37,10 +37,10 @@ public sealed class LiveAdjustmentCapture : MonoBehaviour
     }
     private readonly List<Watch> _watched = new();
     private readonly List<string> _events = new();
-    private bool _armed, _busy, _wasHotkey;
+    private bool _armed, _busy, _wasHotkey, _wasMark;
     private bool _leftKnown, _rightKnown, _leftDown, _rightDown;
     private float _started, _nextInput, _nextSample, _rescanAt = -1, _firstTrigger = -1;
-    private int _presses, _samples, _overflow;
+    private int _presses, _samples, _overflow, _manualMarks, _rescanCount;
     private uint _rawButtons;
 
     private static bool Key(int key) => (GetAsyncKeyState(key) & 0x8000) != 0;
@@ -70,13 +70,18 @@ public sealed class LiveAdjustmentCapture : MonoBehaviour
     }
     private void Start()
     {
-        Plugin.ModLog.LogInfo("[WeaponAdjustments] Ctrl+Alt+R arms the read-only live adjustment recorder.");
+        Plugin.ModLog.LogInfo("[WeaponAdjustments] Ctrl+Alt+R arms/stops live capture; Ctrl+Alt+M adds a timeline marker.");
         Plugin.ModLog.LogWarning("[WeaponAdjustments] Trigger markers are inferred; Orbus start/commit callbacks remain unknown.");
     }
     private void Update()
     {
-        bool hotkey = (!Plugin.RequireFocus.Value || Application.isFocused)
-            && Key(Ctrl) && Key(Alt) && Key(R);
+        bool modifiers = (!Plugin.RequireFocus.Value || Application.isFocused)
+            && Key(Ctrl) && Key(Alt);
+        bool hotkey = modifiers && Key(R);
+        bool marker = modifiers && Key(M);
+        if (marker && !_wasMark && _armed && !_busy)
+            Add("USER MARK #" + (++_manualMarks) + " (Ctrl+Alt+M)");
+        _wasMark = marker;
         if (hotkey && !_wasHotkey && !_busy)
         {
             if (_armed) End("manual stop");
@@ -94,7 +99,8 @@ public sealed class LiveAdjustmentCapture : MonoBehaviour
         if (!_armed) return;
         if (_rescanAt > 0 && now >= _rescanAt)
         {
-            _rescanAt = -1;
+            _rescanCount++;
+            _rescanAt = _rescanCount < 3 ? now + 4.0f : -1;
             Scan();
         }
         if (now >= _nextSample)
@@ -110,9 +116,10 @@ public sealed class LiveAdjustmentCapture : MonoBehaviour
         {
             _events.Clear(); _watched.Clear();
             _leftKnown = _rightKnown = _leftDown = _rightDown = false;
-            _presses = _samples = _overflow = 0;
+            _presses = _samples = _overflow = _manualMarks = _rescanCount = 0;
             _rawButtons = 0;
-            _firstTrigger = _rescanAt = -1;
+            _firstTrigger = -1;
+            _rescanAt = Time.realtimeSinceStartup + 1.5f;
             _started = Time.realtimeSinceStartup;
             _nextInput = _nextSample = _started;
             ProbeXrTriggerApi();
@@ -131,42 +138,61 @@ public sealed class LiveAdjustmentCapture : MonoBehaviour
     }
     private void Scan()
     {
+        // Only live active scene transforms. The old FindObjectsOfTypeAll scan
+        // selected inactive prefabs and hundreds of repeated other-player wands.
         var known = new HashSet<int>();
         foreach (Watch w in _watched)
             if (w.Transform != null) known.Add(w.Transform.GetInstanceID());
-
         var candidates = new List<Watch>();
-        int inspected = 0;
-        foreach (Transform t in Resources.FindObjectsOfTypeAll<Transform>())
+        int inspected = 0, relevant = 0;
+        foreach (Transform t in UnityEngine.Object.FindObjectsOfType<Transform>())
         {
             if (++inspected > MaxScan) break;
             try
             {
-                if (t == null || !Relevant(t.gameObject.name) || !known.Add(t.GetInstanceID())) continue;
+                if (t == null || !t.gameObject.activeInHierarchy ||
+                    !known.Add(t.GetInstanceID())) continue;
                 string path = PathOf(t);
-                int score = (Has(path,"adjust")?70:0) +
-                    (Has(path,"wand")?60:0) + (Has(path,"weapon")?50:0) +
-                    (Has(path,"grip")||Has(path,"offset")?35:0) +
-                    (Has(path,"hand")||Has(path,"controller")?10:0);
+                string name = t.gameObject.name;
+                if (!Relevant(name) && !Relevant(path)) continue;
+                relevant++;
+                int score = (Has(path, "PlayerRigv4") ? 240 : 0) +
+                    (Has(path, "LocalPlayer") ? 120 : 0) +
+                    (Has(name, "Wand") ? 120 : 0) +
+                    (Has(name, "Weapon") ? 90 : 0) +
+                    (Has(name, "Adjust") ? 100 : 0) +
+                    (Has(path, "Runemage") ? 90 : 0) +
+                    (Has(path, "Controller (right)") ? 60 : 0) +
+                    (Has(path, "Controller (left)") ? 55 : 0) +
+                    (Has(name, "Hand") ? 45 : 0) +
+                    (Has(path, "Grip") || Has(path, "Offset") ? 50 : 0) -
+                    (Has(path, "OtherPlayer") ? 180 : 0) -
+                    (Has(path, "TransmogStation") ? 100 : 0) -
+                    (Has(path, "Npc") ? 90 : 0);
                 candidates.Add(new Watch {
-                    Transform=t, Path=path, Rank=score,
-                    FirstPos=t.localPosition,LastPos=t.localPosition,
-                    FirstRot=t.localRotation,LastRot=t.localRotation,
-                    FirstActive=t.gameObject.activeInHierarchy,
-                    LastActive=t.gameObject.activeInHierarchy
+                    Transform = t, Path = path, Rank = score,
+                    FirstPos = t.localPosition, LastPos = t.localPosition,
+                    FirstRot = t.localRotation, LastRot = t.localRotation,
+                    FirstActive = true, LastActive = true
                 });
             }
             catch { }
         }
         int added = 0;
-        foreach (Watch w in candidates.OrderByDescending(w => w.Rank)
-                     .Take(Math.Max(0,MaxWatched - _watched.Count)))
+        var usedPaths = new HashSet<string>(StringComparer.Ordinal);
+        foreach (Watch w in _watched) usedPaths.Add(w.Path);
+        foreach (Watch w in candidates.OrderByDescending(w => w.Rank))
         {
+            if (_watched.Count >= MaxWatched) break;
+            if (!usedPaths.Add(w.Path)) continue;
             _watched.Add(w);
-            if (++added <= 25)
-                Add("WATCH "+w.Path+" initialPos="+V(w.FirstPos)+" initialRot="+Q(w.FirstRot));
+            if (++added <= 40)
+                Add("ACTIVE WATCH " + w.Path + " priority=" + w.Rank +
+                    " initialPos=" + V(w.FirstPos) +
+                    " initialRot=" + Q(w.FirstRot));
         }
-        Add($"SCAN checked={inspected} candidates={candidates.Count} added={added} watched={_watched.Count}");
+        Add($"ACTIVE SCENE SCAN inspected={inspected} relevant={relevant} " +
+            $"candidates={candidates.Count} newlyWatched={added} watched={_watched.Count}");
     }
     private void ReadInputs()
     {
@@ -248,7 +274,7 @@ public sealed class LiveAdjustmentCapture : MonoBehaviour
         {
             Add("STOP: "+reason);
             var sb = new StringBuilder(150000);
-            sb.AppendLine("ORBUS WEAPON ADJUSTMENTS LIVE DIAGNOSTIC v0.1.1");
+            sb.AppendLine("ORBUS WEAPON ADJUSTMENTS LIVE DIAGNOSTIC v0.1.2");
             sb.AppendLine("Read-only: these input edges are NOT verified game callbacks.");
             sb.AppendLine("Review paths for player names before sharing. No UI text or network data collected.");
             sb.AppendLine($"reason={reason} seconds={Time.realtimeSinceStartup-_started:0.00} samples={_samples} watched={_watched.Count} triggers={_presses} dropped={_overflow}");

@@ -2,7 +2,7 @@
 
 Standalone, **read-only diagnostic plugin** for OrbusVR (BepInEx IL2CPP, Unity 2018). The goal is to understand the game's **existing Weapon Adjustment** workflow before adding native Settings controls, numeric fine-tuning, named presets and preset import/export.
 
-Current version: **v0.1.1** — experimental diagnostics only. **No weapon changes, UI injection, network access, or preset storage.**
+Current version: **v0.1.2** — experimental diagnostics only. **No weapon changes, UI injection, network access, or preset storage.**
 
 ## Clone, build and publish for RebornManager
 
@@ -32,12 +32,12 @@ To compile without publishing, use `.\release.ps1 -BuildOnly`. After a successfu
 1. Launch your chosen OrbusVR instance with the mod, equip your Runemage wand and open the game's **existing Weapon Adjustment** menu.
 2. Press **Ctrl+Alt+R** on the desktop keyboard to **ARM** the live capture **before** clicking Orbus's adjustment button.
 3. Click the real in-game adjustment button, then move and rotate your wand naturally.
-4. Press the controller trigger to confirm. The recorder records XR trigger and raw joystick button edges. It **attempts** to end on a second distinct XR trigger press at least 1.5 seconds after the first. If that does not occur, press **Ctrl+Alt+R** again to stop manually.
+4. Press the controller trigger to confirm. The recorder records XR trigger and raw joystick button edges. Press **Ctrl+Alt+R again to stop manually** after confirming in Orbus. Automatic end detection is off by default because the tested client did not expose the XR trigger API.
 5. Locate `BepInEx\WeaponAdjustmentDiagnostics\WeaponAdjustments_Live_*.txt` within your selected Orbus instance.
 
-The recorder samples likely adjustment/wand/hand/controller/menu transforms around 10 times per second, notes changes to their local positions and rotations, and performs one bounded re-scan soon after the first XR trigger event. It times out after 90 seconds. First scans may cause a brief VR hitch. Test somewhere stationary and safe.
+The recorder prioritises active scene objects rather than inactive weapon prefabs, samples likely adjustment/wand/hand/controller/menu transforms around 10 times per second, notes changes to their local positions and rotations, and performs one bounded re-scan soon after the first XR trigger event. It rescans the active scene after entering adjustment mode and times out after 90 seconds. Ctrl+Alt+M optionally adds a timestamp marker. The scans may briefly hitch in VR. Test somewhere stationary and safe.
 
-**Important:** The inferred trigger start/end markers are *not* verified game callbacks or proof of persistence. Some clients may not expose XR trigger state, in which case manual stop is necessary. If the automatic stop fires too early, set `LiveCapture.AutoStopOnSecondTrigger=false` in the plugin's BepInEx config, then stop manually.
+**Important:** The inferred trigger start/end markers are *not* verified game callbacks or proof of persistence. Some clients may not expose XR trigger state, in which case manual stop is necessary. The optional `LiveCapture.AutoStopOnSecondTrigger=true` heuristic is unreliable unless an XR trigger API is available. Keep it disabled by default and stop manually.
 
 ## Test 2: compare before and after
 

@@ -99,21 +99,32 @@ public sealed class AdjustmentDiagnostics : MonoBehaviour
     }
     private static List<Candidate> Scan()
     {
+        // Active scene objects only. FindObjectsOfTypeAll also includes
+        // inactive prefabs; the previous snapshot was dominated by 550 of them.
         var candidates = new List<Candidate>();
         int inspected = 0;
-        foreach (GameObject go in Resources.FindObjectsOfTypeAll<GameObject>())
+        foreach (GameObject go in UnityEngine.Object.FindObjectsOfType<GameObject>())
         {
             if (++inspected > MaxScanned) break;
             try
             {
-                if (go == null || Score(go.name) == 0) continue;
+                if (go == null || !go.activeInHierarchy) continue;
                 Transform t = go.transform;
                 string path = PathOf(t);
+                int score = Score(go.name) + Math.Min(40, Score(path) / 3);
+                if (score == 0) continue;
+                if (Has(path, "PlayerRigv4")) score += 180;
+                if (Has(path, "LocalPlayer")) score += 120;
+                if (Has(path, "Runemage")) score += 90;
+                if (Has(path, "Controller (right)") || Has(path, "Controller (left)"))
+                    score += 70;
+                if (Has(path, "OtherPlayer")) score -= 140;
+                if (Has(path, "TransmogStation")) score -= 110;
                 candidates.Add(new Candidate {
                     Id = go.GetInstanceID(), Name = Clean(go.name), Path = path,
-                    Score = Score(go.name) + Math.Min(28, Score(path) / 4),
-                    Position = t.localPosition, Rotation = t.localRotation,
-                    Active = go.activeInHierarchy, Components = Components(go)
+                    Score = score, Position = t.localPosition,
+                    Rotation = t.localRotation, Active = true,
+                    Components = Components(go)
                 });
             }
             catch { }
@@ -125,7 +136,7 @@ public sealed class AdjustmentDiagnostics : MonoBehaviour
     private static string V(Vector3 v) => $"({v.x:0.00000},{v.y:0.00000},{v.z:0.00000})";
     private static string Q(Quaternion q) => $"({q.x:0.00000},{q.y:0.00000},{q.z:0.00000},{q.w:0.00000})";
     private static string Header(string name) =>
-        "ORBUS WEAPON ADJUSTMENTS - DIAGNOSTIC v0.1.1\n" +
+        "ORBUS WEAPON ADJUSTMENTS - DIAGNOSTIC v0.1.2\n" +
         $"Report={name} saved={DateTime.Now:yyyy-MM-dd HH:mm:ss}\n" +
         "READ ONLY: These are observed Unity object transforms, not verified saved weapon settings.\n" +
         "Object paths can contain player names. Review before sharing.\n" +
