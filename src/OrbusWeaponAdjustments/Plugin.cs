@@ -4,7 +4,7 @@ using BepInEx.Unity.IL2CPP;
 
 namespace OrbusWeaponAdjustments;
 
-[BepInPlugin("com.horizon.orbus.weaponadjustments", "OrbusWeaponAdjustments", "0.2.2")]
+[BepInPlugin("com.horizon.orbus.weaponadjustments", "OrbusWeaponAdjustments", "0.2.3")]
 public sealed class Plugin : BasePlugin
 {
     internal static BepInEx.Logging.ManualLogSource ModLog = null!;
@@ -41,7 +41,7 @@ public sealed class Plugin : BasePlugin
         AddComponent<AdjustmentDiagnostics>();
         AddComponent<LiveAdjustmentCapture>();
 
-        Log.LogInfo("[WeaponAdjustments v0.2.2] Preset manager moved to RebornMenu Mods; legacy diagnostics preserved.");
+        Log.LogInfo("[WeaponAdjustments v0.2.3] Generic RebornMenu page provider active; legacy diagnostics preserved.");
         Log.LogInfo("[WeaponAdjustments/Presets] Durable storage: " + PresetStore.Location);
         if (!string.IsNullOrEmpty(PresetStore.Error))
             Log.LogWarning("[WeaponAdjustments/Presets] " + PresetStore.Error);

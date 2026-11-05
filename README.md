@@ -1,6 +1,6 @@
 # OrbusWeaponAdjustments
 
-Standalone BepInEx IL2CPP plugin for OrbusVR. **v0.2.2 moves the preset manager into WeaponAdjustments' own RebornMenu Mods page.** Vanilla General Settings is left untouched. Save and Rename use Orbus's native VR keyboard, and a compact class-specific list shows Load / Rename / Delete beside each named preset. Automatic originals, backups, Trash and the legacy diagnostics are preserved.
+Standalone BepInEx IL2CPP plugin for OrbusVR. **v0.2.3 uses the reusable RebornMenu custom-page API to host the preset manager into WeaponAdjustments' own RebornMenu Mods page.** Vanilla General Settings is left untouched. Save and Rename use Orbus's native VR keyboard, and a compact class-specific list shows Load / Rename / Delete beside each named preset. Automatic originals, backups, Trash and the legacy diagnostics are preserved.
 
 **First-test warning:** Source is not yet compiled/tested against the user's Renewed/Spades instance. It fails closed when the class, exact live PlayerPrefs keys, or vanilla rig refresh method cannot be verified. Open Settings → Adjust Weapon Grip to find the native preset section. A preset cannot load until its class's six reader keys and enable flag are known, so a class may show "pending" on its first visit. Don't use Reset on a valuable grip until the initial Original backup appears.
 
@@ -203,3 +203,23 @@ originals, named presets, Trash, Backups and exports remain at:
 %LOCALAPPDATA%\OrbusWeaponAdjustments\Presets\v1
 
 Focused test instructions: docs/PRESETS_V022_MODS_PAGE_TEST.md
+
+## v0.2.3 — generic RebornMenu custom-page provider
+
+WeaponAdjustments now advertises its page through the **v1 public
+custom-page convention**, rather than requiring RebornMenu to hardcode
+the WeaponPresetUi class or this plugin's GUID.
+
+- `public const string RebornMenuModGuid` is set to the BepInPlugin GUID.
+- `public static bool RenderInRebornMenu(object document, object content)`
+  renders the page in the existing Mods right-side panel.
+- **RebornMenu v0.2.12+** discovers any installed mod's corresponding
+  provider in its own assembly; future mods can use this same convention
+  without any RebornMenu source changes.
+- No preset schema, durable storage, backup policy, loading mechanic,
+  naming interface or class separation changed in this release.
+- The v0.2.2-specific hardcoded hook still works with older
+  RebornMenu v0.2.11 as a compatibility fallback until you upgrade.
+
+See the RebornMenu repository's `docs/AUTOMATIC_MOD_SETTINGS.md` for
+the generic provider contract and a copyable example.

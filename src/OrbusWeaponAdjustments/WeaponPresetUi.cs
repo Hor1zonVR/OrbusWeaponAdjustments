@@ -15,6 +15,9 @@ namespace OrbusWeaponAdjustments;
 /// </summary>
 public sealed class WeaponPresetUi : MonoBehaviour
 {
+    // Generic v1 RebornMenu page convention. Matches our BepInPlugin GUID.
+    // Any other mod can export the same named constant + render method.
+    public const string RebornMenuModGuid = "com.horizon.orbus.weaponadjustments";
     public WeaponPresetUi(IntPtr ptr) : base(ptr) { }
 
     private const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic |
