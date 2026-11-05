@@ -239,7 +239,7 @@ public sealed class WeaponPresetUi : MonoBehaviour
         IReadOnlyList<GripPreset> active = identified ? PresetStore.List(scope) : Array.Empty<GripPreset>();
         IReadOnlyList<GripPreset> trash = identified ? PresetStore.Deleted(scope) : Array.Empty<GripPreset>();
         string indicator = identified ? ctx.ClassName + " / " + ctx.Controller :
-            "Character or class not ready";
+            GripEngine.ContextStatus;
         string fingerprint = indicator + "/" + PresetStore.Error + "/" + GripEngine.Status +
             "/" + _message + "/" + _deleteId + "/" + _showTrash + "/" +
             string.Join(",", active.Select(p => p.Id + ":" + p.Name)) + "/" +
@@ -259,7 +259,8 @@ public sealed class WeaponPresetUi : MonoBehaviour
         }
         else if (!identified)
         {
-            html.Append("<p>Waiting for the local character and active class. No changes made.</p>");
+            html.Append("<p>Preset Save/Load is locked until the active character, class " +
+                "and controller are verified. Your existing weapon adjustment is unchanged.</p>");
         }
         else
         {
@@ -275,7 +276,6 @@ public sealed class WeaponPresetUi : MonoBehaviour
                     "style='width:75%;color:#24190f;background:#e5d7b6;padding:4px;'/></p>");
             html.Append("<ul class='menu-list'>")
                 .Append(Btn("wa-save", "Save Current as New Preset"))
-                .Append(Btn("wa-backup", "Back Up All Presets"))
                 .Append("</ul>");
             if (active.Count == 0)
                 html.Append("<p>No saved presets for this class yet.</p>");
@@ -316,6 +316,12 @@ public sealed class WeaponPresetUi : MonoBehaviour
                 }
             }
         }
+        // Backup/Export is safe even if class identity isn't ready: it only
+        // copies existing durable JSON records and never edits game prefs.
+        if (string.IsNullOrEmpty(PresetStore.Error))
+            html.Append("<ul class='menu-list'>")
+                .Append(Btn("wa-backup", "Back Up All Presets"))
+                .Append("</ul>");
         if (!string.IsNullOrEmpty(_message)) html.Append("<p>").Append(Escape(_message)).Append("</p>");
         html.Append("<p style='font-size:13px;'>Presets and recovery copies are stored outside RebornManager updates.</p>");
         if (!InnerHtml(_panel, html.ToString()))
@@ -327,13 +333,14 @@ public sealed class WeaponPresetUi : MonoBehaviour
             }
             return;
         }
+        if (string.IsNullOrEmpty(PresetStore.Error))
+            Bind("wa-backup", () => Action(() => PresetStore.BackupAll().message));
         if (!identified || !string.IsNullOrEmpty(PresetStore.Error)) return;
         Bind("wa-save", () =>
         {
             _draftName = CurrentName();
             Action(() => GripEngine.SaveNamed(_draftName));
         });
-        Bind("wa-backup", () => Action(() => PresetStore.BackupAll().message));
         for (int i = 0; i < Math.Min(80, active.Count); i++)
         {
             GripPreset preset = active[i];
