@@ -448,3 +448,35 @@ must never modify the game's existing PlayerPrefs or equipped weapon.
 6. Simulate a corrupt/failed import write: preserve vanilla settings
    and existing backups, and retry safely without marking the
    operation complete.
+
+## v0.2.0 first implementation (unverified in game)
+
+Code now includes PresetStore.cs (versioned per-record JSON storage under
+%LOCALAPPDATA%/OrbusWeaponAdjustments/Presets/v1), GripEngine.cs (strict
+local player/class/controller detection and keyed PlayerPrefs read/apply),
+WeaponPointerEvents.cs (ported working native PowerUI delegate bridge),
+and WeaponPresetUi.cs (inserts after the actual ng.emh/ng.emi vanilla list).
+
+Read hooks: obfuscated cgr.lvo/lvp and UnityEngine.PlayerPrefs.GetFloat.
+Flag candidate: cgr.Reset and UnityEngine.PlayerPrefs.GetInt, plus
+authoritative cmi.mnh SubmitAdjust write observation. Source signatures
+are validated before Harmony hooks install. Legacy NativeAdjustmentTrace
+and PersistenceProbe remain entirely intact.
+
+Only complete pre-existing six-float key sets are imported as Original Grip
+(Imported). A first new vanilla submit without earlier readable values is
+backed up transparently as First Grip Captured After Install, not mislabeled
+as a pre-install original. All-class import is attempted only by safe
+class-token substitution AND confirmation that all six keys already
+exist; otherwise individual classes stay pending until first equip.
+
+Load requires a matching scope, verified live six-key set and enable flag,
+and a durable rollback record written before any game PlayerPrefs writes.
+It calls the mapped cbn.kxt() vanilla rig refresh and checks float
+readback. Failure attempts to restore each previous key, including keys
+that did not previously exist. User can also invoke Restore Previous Grip.
+
+**Important:** this is the first live test; the UI, reader interception,
+identity fields and refresh call are structurally mapped but not yet
+tested with compiled DLL on Spades. No claim of runtime success until
+the user builds and reports results. Test plan: docs/PRESETS_V020_TEST.md.

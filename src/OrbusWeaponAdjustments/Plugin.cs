@@ -4,7 +4,7 @@ using BepInEx.Unity.IL2CPP;
 
 namespace OrbusWeaponAdjustments;
 
-[BepInPlugin("com.horizon.orbus.weaponadjustments", "OrbusWeaponAdjustments", "0.1.7")]
+[BepInPlugin("com.horizon.orbus.weaponadjustments", "OrbusWeaponAdjustments", "0.2.0")]
 public sealed class Plugin : BasePlugin
 {
     internal static BepInEx.Logging.ManualLogSource ModLog = null!;
@@ -32,17 +32,24 @@ public sealed class Plugin : BasePlugin
             "Read-only submit-scoped PlayerPrefs probe. Captures the six candidate grip " +
             "floats (and small integers) with anonymous key slots while Ctrl+Alt+P is active. " +
             "Key names are never saved. Restart required.");
+        PresetStore.Init();
         NativeAdjustmentTrace.Install();
         PersistenceProbe.Install(Log);
+        GripEngine.Install();
         AddComponent<NativeAdjustmentTraceBehaviour>();
+        AddComponent<WeaponPresetUi>();
         AddComponent<AdjustmentDiagnostics>();
         AddComponent<LiveAdjustmentCapture>();
 
-        Log.LogInfo("[WeaponAdjustments v0.1.7] READ-ONLY diagnostics loaded.");
+        Log.LogInfo("[WeaponAdjustments v0.2.0] Native preset prototype loaded; legacy diagnostics preserved.");
+        Log.LogInfo("[WeaponAdjustments/Presets] Durable storage: " + PresetStore.Location);
+        if (!string.IsNullOrEmpty(PresetStore.Error))
+            Log.LogWarning("[WeaponAdjustments/Presets] " + PresetStore.Error);
         Log.LogInfo("[WeaponAdjustments] Ctrl+Alt+J = baseline; Ctrl+Alt+K = compare; Ctrl+Alt+U = snapshot.");
         Log.LogInfo("[WeaponAdjustments] Ctrl+Alt+R = arm/stop LIVE capture; Ctrl+Alt+M = timestamp marker.");
         Log.LogInfo("[WeaponAdjustments] Ctrl+Alt+P = trace native adjustment and local preference write API calls.");
         Log.LogInfo("[WeaponAdjustments] Only SubmitAdjust-scoped numeric writes are captured; preference key names are never saved.");
-        Log.LogInfo("[WeaponAdjustments] Does not edit weapon values, inject UI, or access network.");
+        Log.LogInfo("[WeaponAdjustments] Native Settings adds class-scoped Save/Load/Trash/Restore controls.");
+        Log.LogInfo("[WeaponAdjustments] Load only runs after exact live key verification and a durable rollback backup.");
     }
 }

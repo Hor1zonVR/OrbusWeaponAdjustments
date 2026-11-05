@@ -1,19 +1,22 @@
 # OrbusWeaponAdjustments
 
-Standalone, **read-only diagnostic plugin** for OrbusVR (BepInEx IL2CPP, Unity 2018). The goal is to understand the game's **existing Weapon Adjustment** workflow before adding native Settings controls, numeric fine-tuning, named presets and preset import/export.
+Standalone BepInEx IL2CPP plugin for OrbusVR. **v0.2.0 is the first native Weapon Presets test release**: class-scoped names, Save New, Load, Rename, confirmed Trash deletion, Restore, and automatic original-grip import. All older diagnostic shortcuts are preserved.
 
-Current version: **v0.1.7** — experimental diagnostics only. **No weapon changes, UI injection, network access, or preset storage.** The optional numeric trace records arguments to vanilla save calls only while SubmitAdjust executes; preference key names are never saved.
+**First-test warning:** Source is not yet compiled/tested against the user's Renewed/Spades instance. It fails closed when the class, exact live PlayerPrefs keys, or vanilla rig refresh method cannot be verified. Open Settings → Adjust Weapon Grip to find the native preset section. A preset cannot load until its class's six reader keys and enable flag are known, so a class may show "pending" on its first visit. Don't use Reset on a valuable grip until the initial Original backup appears.
+
+Presets, Trash, immutable originals, exports and before-load backups live under `%LOCALAPPDATA%\\OrbusWeaponAdjustments\\Presets\\v1`, **outside RebornManager's instance and DLL update directories**. No network calls or manual DLL installation are required.
 
 ## Clone, build and publish for RebornManager
 
-Open PowerShell anywhere:
+If the repository is already cloned, update it before publishing:
 
 ```powershell
-cd "$env:USERPROFILE\OneDrive\Documents"
-git clone https://github.com/Hor1zonVR/OrbusWeaponAdjustments.git
-cd OrbusWeaponAdjustments
+cd "$env:USERPROFILE\OneDrive\Documents\OrbusWeaponAdjustments"
+git pull origin main
 .\release.ps1
 ```
+
+If it is not yet cloned, use `gh repo clone Hor1zonVR/OrbusWeaponAdjustments` first.
 
 The release script requires Git, GitHub CLI (`gh`, authenticated as `Hor1zonVR`) and a .NET SDK. It detects a RebornManager instance under `%LOCALAPPDATA%\OrbusRebornModdingInstances` with BepInEx-generated interop, compiles the DLL, pushes any local source changes, creates a **stable** GitHub release and uploads `OrbusWeaponAdjustments.dll`.
 
@@ -136,3 +139,19 @@ ADJUST.SubmitAdjust AFTER ...
 If preferred, do one safe small adjustment to minimise disruption to your existing Bard grip. No Reset needed.
 
 **Interpretation caution:** 6 floats suggest 3 position + 3 Euler angles, but order, units, coordinate frame, and key format are still unverified. Never use experimental values to write settings until that mapping is established. Existing v0.1.4 scene diagnostics and v0.1.5 method hooks remain available.
+
+## v0.2.0: first native weapon preset release
+
+The add-on is inserted immediately after the game's existing **Toggle Weapon Adjustment / Reset** list, before **Relocation Anchors**. Native PowerUI handlers support the user's VR controls. The preset textbox uses a vanilla PowerUI text input. Existing Settings nodes are never removed or rebuilt.
+
+- **Automatic scope:** only the currently active character/class/controller's presets appear. Switching classes changes the list; stale actions recheck the scope before any change.
+- **Original backup:** opening Settings invokes the verified native rig refresh once to discover saved keys. If all six keys exist, the previous vanilla adjustment is saved as **Original Grip (Imported)**, and a second recovery copy is written before it can be changed. Other classes are imported when keys can be verified by exact class substitution and `PlayerPrefs.HasKey`, or on first equip. No fake originals are created for a default/unset class.
+- **Save As / Rename:** custom names up to 48 characters. New saves never overwrite existing presets. Renames preserve a backup of the previous revision.
+- **Load:** requires a validated six-key map, enabled flag, currently matching character/class/controller and an on-disk before-load rollback snapshot. Writes to the *game's existing* PlayerPrefs keys then calls the mapped native `PlayerAvatar.MakeRigBasedAdjustments` method. If the key readback fails, it attempts to restore the exact previous state.
+- **Delete:** always shows an explicit Confirm Delete / Cancel step. Confirm moves the preset to recoverable Trash, not permanent deletion. Original recovery copies and backups are never purged automatically.
+- **Restore Previous Grip:** undoes the most recent successful load for the same active class, retaining a recoverable before-undo backup.
+- **Back Up All Presets:** copies all Active/Trash/Originals/Backups JSON records into a separate timestamped Exports directory.
+
+**Limitations:** the renewed class mappings are metadata-verified but the v0.2.0 UI, GetFloat reader hooks and apply path require a first live test. The game may not expose an original's enable key until a native reset or a new adjustment event. In that case Load displays a safety message and **changes nothing**. Before reporting success, verify a class switch, a session relaunch and the physical weapon grip in VR. Don't assume that saving PlayerPrefs alone proves the rig visually refreshed.
+
+See `docs/PRESETS_V020_TEST.md` for step-by-step tests. Existing v0.1.4-v0.1.7 diagnostic sections above are retained for troubleshooting.

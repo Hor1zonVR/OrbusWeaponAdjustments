@@ -22,7 +22,7 @@ try {
     Write-Host ''
     Write-Host '====================================================' -ForegroundColor Cyan
     Write-Host ' OrbusWeaponAdjustments -> GitHub Releases -> RM' -ForegroundColor Cyan
-    Write-Host ' v0.1.7 read-only diagnostic; NO weapon modifications' -ForegroundColor Yellow
+    Write-Host ' v0.2.0 native class-specific weapon presets (first test)' -ForegroundColor Yellow
     Write-Host '====================================================' -ForegroundColor Cyan
     Write-Host ''
 
@@ -72,7 +72,7 @@ try {
 
     Write-Host "Building $tag against: $GameDir" -ForegroundColor Cyan
     & dotnet build $project -c Release --no-incremental "-p:GameDir=$GameDir"
-    CheckExit 'Building diagnostic DLL'
+    CheckExit 'Building weapon preset DLL'
     if (!(Test-Path $dll -PathType Leaf)) { throw "Compiled DLL missing: $dll" }
     Write-Host "Compiled: $dll" -ForegroundColor Green
 
@@ -134,12 +134,12 @@ try {
         $releaseExists = $publishedTags -contains $tag
         if (-not $releaseExists) {
             Write-Host "Creating stable GitHub release $tag with DLL..." -ForegroundColor Cyan
-            $notes = 'Diagnostic-only Orbus weapon-adjustment recorder. Ctrl+Alt+R for a live 90-second session, Ctrl+Alt+J/K/U for manual snapshots. Observes XR trigger/button edges and likely wand/menu transforms. No weapon values or UI are changed.'
+            $notes = 'First native PowerUI Weapon Presets test: named per-class/controller/character presets, protected first-run grip backups, durable storage outside RM instances, confirmation before Trash deletion, Rename, Restore, manual backup export and safe Load/Undo through verified native grip keys. Legacy diagnostics remain available. THIS IS THE FIRST UNVERIFIED LIVE TEST BUILD; use Backup All Presets and verify your existing grip before loading.'
             $commit = (& git rev-parse HEAD).Trim()
             CheckExit 'Reading source commit'
             # Use the same one-step release publication as RebornCamera.
-            & gh release create $tag $dll --repo $repo --target $commit --title "OrbusWeaponAdjustments $tag - Diagnostic Test" --notes $notes
-            CheckExit 'Publishing stable release and diagnostic DLL'
+            & gh release create $tag $dll --repo $repo --target $commit --title "OrbusWeaponAdjustments $tag - Native Presets Test" --notes $notes
+            CheckExit 'Publishing stable release and preset DLL'
         }
         else {
             Write-Host "GitHub release $tag already exists; verifying its DLL..." -ForegroundColor Yellow
@@ -155,7 +155,7 @@ try {
             $_.name -eq 'OrbusWeaponAdjustments.dll' -and $_.size -gt 0
         })
         if ($assets.Count -eq 0) {
-            Write-Host 'Uploading diagnostic DLL...' -ForegroundColor Cyan
+            Write-Host 'Uploading weapon preset DLL...' -ForegroundColor Cyan
             & gh release upload $tag $dll --repo $repo
             CheckExit 'Uploading release DLL'
         }
