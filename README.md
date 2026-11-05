@@ -2,7 +2,7 @@
 
 Standalone, **read-only diagnostic plugin** for OrbusVR (BepInEx IL2CPP, Unity 2018). The goal is to understand the game's **existing Weapon Adjustment** workflow before adding native Settings controls, numeric fine-tuning, named presets and preset import/export.
 
-Current version: **v0.1.5** — experimental diagnostics only. **No weapon changes, UI injection, network access, or preset storage.**
+Current version: **v0.1.6** — experimental diagnostics only. **No weapon changes, UI injection, network access, or preset storage.**
 
 ## Clone, build and publish for RebornManager
 
@@ -57,13 +57,13 @@ Reports are saved in `BepInEx\WeaponAdjustmentDiagnostics` in the launched insta
 
 First verify what values the original game changes and saves; do not assume a moving hand transform is the actual persistent weapon offset.
 
-## v0.1.5 diagnostic changes
+## v0.1.6 diagnostic changes
 
 Prior recordings proved that the player's PlayerRigv4 controllers moved but a large number of finger bones crowded out more useful objects. This version uses direct object-name checks, captures the actual wand clone and its parent transforms, watches changes in both local and world coordinates, and lists component type names on newly watched objects.
 
 For a useful recording, capture a clear before/after adjustment for roughly 10–20 seconds. Press Ctrl+Alt+R to start, perform a single adjustment, then Ctrl+Alt+R to stop. If possible, also take a Ctrl+Alt+J baseline before adjustment and Ctrl+Alt+K comparison afterward. No adjustment settings are modified by this plugin.
 
-## Focused parent-change investigation (v0.1.5)
+## Focused parent-change investigation (v0.1.6)
 
 The previous recording caught the actual `New Game Object/wandT2c(Clone)(Clone)` and large local position jumps on its parent, while world position stayed nearly the same. This strongly suggests that the parent gets reattached to a hand/controller transform, but does not prove where the game stores the final adjustment.
 
@@ -71,13 +71,13 @@ The live diagnostic now writes **PARENT CHANGE** events with old/new parent path
 
 Suggested test: start live capture while the wand is equipped, perform one vanilla weapon adjustment, confirm it, then manually stop capture. Send the `WeaponAdjustments_Live_*.txt` report. If there are no parent-change events, take a `Ctrl+Alt+U` snapshot after the adjustment as a follow-up. Everything remains read-only.
 
-## Test 3: mapped native method events (v0.1.5)
+## Test 3: mapped native method events (v0.1.6)
 
 The readable Community dump has `MagicalActual.WeaponAdjuster` with `SubmitAdjust`, `WeaponGripped` and `WeaponUngripped`. Structural matching to the Renewed/Spades dump identifies `cmi.mnh`, `cmi.mni`, and `cmi.mnj` respectively. The native Settings UI routes its original buttons through `ng.emh` (toggle adjustment) and `ng.emi` (reset).
 
 Unlike the older scene scanning, **this test patches only those five signature-checked methods** with observational Harmony callbacks. It never invokes submit, changes a transform, edits settings, or touches the Settings HTML.
 
-1. Load WeaponAdjustments v0.1.5; check the BepInEx log for `[WeaponAdjustments/Methods] READ-ONLY hooks installed`. If it says the signatures do not match, **nothing is patched**.
+1. Load WeaponAdjustments v0.1.6; check the BepInEx log for `[WeaponAdjustments/Methods] READ-ONLY hooks installed`. If it says the signatures do not match, **nothing is patched**.
 2. With Runemage equipped and the game's native Settings open, press **Ctrl+Alt+P** to start the method trace.
 3. Click **Toggle Weapon Adjustment**, grip/move the spawned weapon, and press the VR trigger to apply the adjustment.
 4. Press **Ctrl+Alt+P** again. This writes `BepInEx\WeaponAdjustmentDiagnostics\WeaponMechanics_*.txt`.
@@ -86,3 +86,23 @@ Unlike the older scene scanning, **this test patches only those five signature-c
 A separate **Reset** test is possible, but avoid pressing Reset during the first trace so it doesn't erase your chosen adjustment. The old live/snapshot/baseline diagnostics remain installed, with their original shortcuts. All method hooks can be disabled through the BepInEx `NativeMethodTrace.EnableReadOnlyHooks` config entry (restart required), which RebornMenu may display automatically.
 
 **Research boundary:** A dump provides class layouts and method names, not the bodies of the game functions. `SubmitAdjust` is strongly identified as the submit handler, but until a native trace fires and the actual persistent data path is investigated, no preset/save implementation is safe.
+
+## v0.1.6: identify candidate persistence APIs
+
+Confirmed in-game on Renewed/Spades: `ng.emh` invokes vanilla adjustment, grip/ungrip events fire through `cmi.mni/mnj`, and `cmi.mnh` runs on submit. Its instance is reparented from the controller's HoldPoint to the controller on submit. Player testing confirms class-specific grip adjustments persist between sessions, but **the save mechanism remains unidentified**.
+
+**Targeted optional storage probe:** while the `Ctrl+Alt+P` native trace is armed, v0.1.6 can observe calls to the standard Unity `PlayerPrefs.SetString/SetFloat/SetInt/Save/DeleteKey` APIs, plus the `CodeStage.AntiCheat.ObscuredTypes.ObscuredPrefs` equivalents when present. It logs method names and timestamps **only**, never keys, saved values, player IDs, network payloads, or file contents. Hooks are optional and isolated from the five proven adjustment hooks. `StorageProbe.ObserveLocalPreferenceWrites` (default `true`) can be switched off via BepInEx/RebornMenu; restart required.
+
+The same native trace also records the temporary adjustment object's local pose at approximately 0.5, 1.5 and 4 seconds after `SubmitAdjust`, plus the direct wand child when still present. The old live timeline and snapshot shortcuts are unchanged.
+
+**Important limitations:** No observed PlayerPrefs write does **not** establish that saving is server-side: the game may use an unrelated local format, direct storage, delayed writes, network services, or methods not patched here. The IL2CPP dump contains only metadata, not actual `SubmitAdjust` implementation; the matching Community `GameAssembly.dll` or verified runtime data is required to establish the complete call path.
+
+### Focused test
+
+1. Refresh/install v0.1.6 through RebornManager. Equip Runemage and open Settings → Adjust Weapon Grip.
+2. Press **Ctrl+Alt+P**, then use Toggle Weapon Adjustment, grip/rotate, and confirm with the VR trigger.
+3. Keep the same session running for **at least 7 more seconds** so the delayed samples are captured.
+4. Press **Ctrl+Alt+P** to stop. Send `WeaponMechanics_*.txt` and the BepInEx log.
+5. Do **not** press Reset for this test. For a control sample, optionally repeat while simply toggling Settings without making an adjustment.
+
+If the optional preference-method hooks fail, the core adjustment trace still works. No weapon positions, values, or saving routines are changed by this release.

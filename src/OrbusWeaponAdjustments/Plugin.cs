@@ -4,7 +4,7 @@ using BepInEx.Unity.IL2CPP;
 
 namespace OrbusWeaponAdjustments;
 
-[BepInPlugin("com.horizon.orbus.weaponadjustments", "OrbusWeaponAdjustments", "0.1.5")]
+[BepInPlugin("com.horizon.orbus.weaponadjustments", "OrbusWeaponAdjustments", "0.1.6")]
 public sealed class Plugin : BasePlugin
 {
     internal static BepInEx.Logging.ManualLogSource ModLog = null!;
@@ -12,6 +12,7 @@ public sealed class Plugin : BasePlugin
     internal static ConfigEntry<bool> IncludeTypeNames = null!;
     internal static ConfigEntry<bool> AutoStopOnSecondTrigger = null!;
     internal static ConfigEntry<bool> EnableNativeMethodTrace = null!;
+    internal static ConfigEntry<bool> ObserveLocalPreferenceWrites = null!;
 
     public override void Load()
     {
@@ -26,15 +27,21 @@ public sealed class Plugin : BasePlugin
             "NativeMethodTrace", "EnableReadOnlyHooks", true,
             "Hook the signature-verified Orbus WeaponAdjuster and vanilla PlayerMenu " +
             "events for opt-in Ctrl+Alt+P diagnostics. Read-only; restart required when changed.");
+        ObserveLocalPreferenceWrites = Config.Bind(
+            "StorageProbe", "ObserveLocalPreferenceWrites", true,
+            "Read-only observation of Unity PlayerPrefs write API method calls while " +
+            "Ctrl+Alt+P trace is active. Does not read keys or values; restart required.");
         NativeAdjustmentTrace.Install();
+        PersistenceProbe.Install(Log);
         AddComponent<NativeAdjustmentTraceBehaviour>();
         AddComponent<AdjustmentDiagnostics>();
         AddComponent<LiveAdjustmentCapture>();
 
-        Log.LogInfo("[WeaponAdjustments v0.1.5] READ-ONLY diagnostics loaded.");
+        Log.LogInfo("[WeaponAdjustments v0.1.6] READ-ONLY diagnostics loaded.");
         Log.LogInfo("[WeaponAdjustments] Ctrl+Alt+J = baseline; Ctrl+Alt+K = compare; Ctrl+Alt+U = snapshot.");
         Log.LogInfo("[WeaponAdjustments] Ctrl+Alt+R = arm/stop LIVE capture; Ctrl+Alt+M = timestamp marker.");
-        Log.LogInfo("[WeaponAdjustments] Ctrl+Alt+P = start/stop NATIVE adjustment method trace.");
+        Log.LogInfo("[WeaponAdjustments] Ctrl+Alt+P = trace native adjustment and local preference write API calls.");
+        Log.LogInfo("[WeaponAdjustments] Preference values and keys are NOT collected.");
         Log.LogInfo("[WeaponAdjustments] Does not edit weapon values, inject UI, or access network.");
     }
 }

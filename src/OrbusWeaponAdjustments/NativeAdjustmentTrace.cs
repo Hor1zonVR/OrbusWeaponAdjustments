@@ -202,7 +202,8 @@ internal static class NativeAdjustmentTrace
         _dropped = 0;
         _start = DateTime.Now;
         _armed = true;
-        Log("ARMED v0.1.5: wait for vanilla toggle, grip, submit; no weapon values modified");
+        Log("ARMED v0.1.6: native adjustment and local persistence API observations; read-only");
+        PersistenceProbe.OnStart();
         Plugin.ModLog.LogInfo("[WeaponAdjustments/Methods] Trace ARMED. Press Ctrl+Alt+P to save.");
     }
 
@@ -211,6 +212,7 @@ internal static class NativeAdjustmentTrace
         if (!_armed) return;
         Log("STOP " + reason);
         _armed = false;
+        PersistenceProbe.OnStop();
         try
         {
             string folder = Path.Combine(Paths.BepInExRootPath, "WeaponAdjustmentDiagnostics");
@@ -218,9 +220,11 @@ internal static class NativeAdjustmentTrace
             string file = Path.Combine(folder, "WeaponMechanics_" +
                 _start.ToString("yyyyMMdd_HHmmss_fff", CultureInfo.InvariantCulture) + ".txt");
             var sb = new StringBuilder(32768);
-            sb.AppendLine("ORBUS WEAPON ADJUSTMENTS: NATIVE METHOD TRACE v0.1.5");
+            sb.AppendLine("ORBUS WEAPON ADJUSTMENTS: NATIVE METHOD TRACE v0.1.6");
             sb.AppendLine("Read-only; method invocation confirms control flow, not persistent save semantics.");
             sb.AppendLine("Derived from Community WeaponAdjuster and renewed cmi class mapping.");
+            sb.AppendLine("Local preference API calls are indicators only; they cannot prove where grip data is saved.");
+            sb.AppendLine("No preference keys or values are captured. No events does NOT prove server storage.");
             sb.AppendLine("Review GameObject names/paths before sharing. No UI input text collected.");
             sb.AppendLine("eventCount=" + Records.Count + " dropped=" + _dropped);
             foreach (string line in Records) sb.AppendLine(line);
@@ -240,6 +244,8 @@ internal static class NativeAdjustmentTrace
         Records.Add(DateTime.Now.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture) +
             " " + eventText);
     }
+
+    internal static void LogStorage(string eventText) => Log(eventText);
 
     private static string Pose(Transform t)
     {
@@ -311,7 +317,11 @@ internal static class NativeAdjustmentTrace
     private static void MenuResetBefore() => Record("MENU.ResetAdjustWeapon BEFORE");
     private static void MenuResetAfter() => Record("MENU.ResetAdjustWeapon AFTER");
     private static void SubmitBefore(object __instance) => Record("ADJUST.SubmitAdjust BEFORE", __instance);
-    private static void SubmitAfter(object __instance) => Record("ADJUST.SubmitAdjust AFTER", __instance);
+    private static void SubmitAfter(object __instance)
+    {
+        Record("ADJUST.SubmitAdjust AFTER", __instance);
+        PersistenceProbe.MarkSubmitted(__instance);
+    }
     private static void GrippedAfter(object __instance) => Record("ADJUST.WeaponGripped AFTER", __instance);
     private static void UngrippedAfter(object __instance) => Record("ADJUST.WeaponUngripped AFTER", __instance);
 }
@@ -329,6 +339,7 @@ public sealed class NativeAdjustmentTraceBehaviour : MonoBehaviour
 
     private void Update()
     {
+        PersistenceProbe.Tick();
         // The generated game interop assembly may load after BepInEx plugins.
         // Retry a tiny exact-type lookup periodically; never scan scene objects.
         if (!NativeAdjustmentTrace.HooksInstalled && Plugin.EnableNativeMethodTrace.Value &&

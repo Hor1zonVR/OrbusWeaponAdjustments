@@ -66,19 +66,88 @@ BepInEx settings automatically exposed by RebornMenu.
 - No recording has yet confirmed a persistent per-class save format,
   network pathway, or safe call to apply numerical adjustments.
 
-## v0.1.5 next test
+## v0.1.5 confirmed runtime evidence — Renewed/Spades
 
-Hooks installed only after matching an exact type/field/method fingerprint:
-`ng.emh`, `ng.emi`, `cmi.mnh`, `cmi.mni`, `cmi.mnj`.
-Community equivalent classes are also supported if their named fingerprints
-match. Hooks are observation-only; the player explicitly starts/stops a trace
-with Ctrl+Alt+P, saved separately as `WeaponMechanics_*.txt`.
+A user-run native report (2026-11-05 12:50) confirmed:
+- All five native Harmony hooks installed: `ng.emh/emi` and `cmi.mnh/mni/mnj`.
+- `ng.emh` before/after fired when opening vanilla weapon adjustment.
+- `cmi.mni` / `cmi.mnj` fired repeatedly during grip/ungrip.
+- `cmi.mnh` definitely fired on confirmation, with 7 ms between the recorded
+  before/after timestamps.
+- Immediately before submit, the adjustment object was parented beneath
+  `PlayerRigv4/Controller (right)/Grabber/Hand/HoldPoint`.
+- Immediately after submit, it was parented directly under
+  `PlayerRigv4/Controller (right)`, with different *local* coordinates.
+  Those before/after coordinates are in different reference frames and must
+  **not** be interpreted as the saved weapon grip offset.
 
-If `SubmitAdjust` fires, capture the component's pose and `isGripped`/
-`timeUntilDeath` *before and after* submission and compare the existing
-transform report for the same interaction. Do not infer the storage mechanism
-from the method's name alone: for that, inspect the actual native call path
-from the appropriate version's binary or discover the live persisted state.
+The tester also verified that each class has a separate grip adjustment,
+that the adjusted grip survives class switches and new sessions, and that
+vanilla Reset or the next class adjustment replaces it.
 
-**Preservation rule:** do not remove `AdjustmentDiagnostics` or
-`LiveAdjustmentCapture` until the new hooks are proven by test logs.
+**What remains UNKNOWN:** the persistence implementation, which exact
+vector/quaternion is saved, whether the data lives in Unity preferences,
+a custom local file, player-avatar state, or a remote service. No native
+function body is available in our decompiled C# metadata dump.
+
+## Community/Renewed PlayerAvatar preference field difference
+
+Another structural class match provides a useful caution.
+
+Community `MagicalActual.PlayerAvatar` has the consecutive fields:
+
+```text
+0x524 xp                 int
+0x528 neededxp           int
+0x52C currentSuperCharge ushort
+0x52E superActive        bool
+0x530 inventory          string
+0x538 equipment          string
+0x540 playerPrefs        string
+0x548 primaryWeaponHand  byte
+```
+
+Renewed/Spades `cbn` structurally matches `PlayerAvatar`, including its
+opening fields `bool` + four `GameObject` refs + two `Transform` refs,
+and a later aligned progression sequence:
+
+```text
+0x470 begi    int          [xp-compatible]
+0x474 begj    int          [neededXP-compatible]
+0x478 begk    ushort       [superCharge-compatible]
+0x47A begl    bool         [superActive-compatible]
+0x480 begm    string       [inventory-compatible]
+0x488 begn    string       [equipment-compatible]
+0x490 bego    Vector3      [basePosition-compatible]
+```
+
+Thus the **Community `playerPrefs` string has no corresponding field at
+this point in the newer class layout**; we must not map it to `begn` or
+assume its offset is unchanged. This does **not** establish whether
+weapon grips are saved somewhere else in `cbn`, in different storage, or
+server-side. Structural class mapping is metadata evidence, not runtime
+verification of individual values.
+
+## v0.1.6 targeted persistence instrumentation
+
+To distinguish likely local preferences from other persistence paths, the
+native trace now optionally observes **method calls only** to
+`UnityEngine.PlayerPrefs.SetString/SetFloat/SetInt/Save/DeleteKey`
+and the analogous `ObscuredPrefs` methods where that type exists.
+No preference key, value, file content, player identifier, or network
+payload is collected. Optional hook failures do not affect the five
+already-proven native adjustment method hooks.
+
+After `cmi.mnh` completes, delayed snapshots at 0.5, 1.5 and 4 seconds
+check whether the temporary adjuster still exists and what its immediate
+wand child / local transform look like. This is bounded to the submitted
+object, not a full-scene search.
+
+An observed local API write may be unrelated and must be correlated
+with the actual submit timeline. The **absence** of write events
+does not prove server-side storage; unhooked local/custom APIs and
+network storage remain possible.
+
+**Preservation rule:** keep the old `AdjustmentDiagnostics` and
+`LiveAdjustmentCapture` components while the targeted native methods
+and storage candidates are being validated.
