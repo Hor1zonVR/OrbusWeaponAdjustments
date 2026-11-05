@@ -12,6 +12,7 @@
     <Reference Include="BepInEx.Core"><HintPath>$(GameDir)\BepInEx\core\BepInEx.Core.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="BepInEx.Unity.IL2CPP"><HintPath>$(GameDir)\BepInEx\core\BepInEx.Unity.IL2CPP.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="Il2CppInterop.Runtime"><HintPath>$(GameDir)\BepInEx\core\Il2CppInterop.Runtime.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(GameDir)\BepInEx\core\0Harmony.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="Il2Cppmscorlib"><HintPath>$(GameDir)\BepInEx\interop\Il2Cppmscorlib.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.CoreModule"><HintPath>$(GameDir)\BepInEx\interop\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.InputModule"><HintPath>$(GameDir)\BepInEx\interop\UnityEngine.InputModule.dll</HintPath><Private>false</Private></Reference>
@@ -20,6 +21,7 @@
     <Error Condition="!Exists('$(GameDir)\BepInEx\core\BepInEx.Core.dll')" Text="BepInEx.Core.dll missing. Supply -p:GameDir=YOUR_ORBUS_INSTANCE." />
     <Error Condition="!Exists('$(GameDir)\BepInEx\core\BepInEx.Unity.IL2CPP.dll')" Text="BepInEx.Unity.IL2CPP.dll missing." />
     <Error Condition="!Exists('$(GameDir)\BepInEx\core\Il2CppInterop.Runtime.dll')" Text="Il2CppInterop.Runtime.dll missing." />
+    <Error Condition="!Exists('$(GameDir)\BepInEx\core\0Harmony.dll')" Text="0Harmony.dll missing; native method trace requires Harmony." />
     <Error Condition="!Exists('$(GameDir)\BepInEx\interop\Il2Cppmscorlib.dll')" Text="Il2Cppmscorlib.dll missing; launch your BepInEx game once." />
     <Error Condition="!Exists('$(GameDir)\BepInEx\interop\UnityEngine.CoreModule.dll')" Text="Unity CoreModule interop missing; launch your BepInEx game once." />
     <Error Condition="!Exists('$(GameDir)\BepInEx\interop\UnityEngine.InputModule.dll')" Text="Unity InputModule interop missing; launch your BepInEx game once." />

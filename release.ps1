@@ -22,7 +22,7 @@ try {
     Write-Host ''
     Write-Host '====================================================' -ForegroundColor Cyan
     Write-Host ' OrbusWeaponAdjustments -> GitHub Releases -> RM' -ForegroundColor Cyan
-    Write-Host ' v0.1.4 read-only diagnostic; NO weapon modifications' -ForegroundColor Yellow
+    Write-Host ' v0.1.5 read-only diagnostic; NO weapon modifications' -ForegroundColor Yellow
     Write-Host '====================================================' -ForegroundColor Cyan
     Write-Host ''
 
@@ -60,6 +60,7 @@ try {
         'BepInEx\core\BepInEx.Core.dll',
         'BepInEx\core\BepInEx.Unity.IL2CPP.dll',
         'BepInEx\core\Il2CppInterop.Runtime.dll',
+        'BepInEx\core\0Harmony.dll',
         'BepInEx\interop\Il2Cppmscorlib.dll',
         'BepInEx\interop\UnityEngine.CoreModule.dll',
         'BepInEx\interop\UnityEngine.InputModule.dll'
