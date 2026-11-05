@@ -269,3 +269,101 @@ alter game PlayerPrefs. Loading should:
 Expose Save / Load / Restore Previous Grip through native Settings,
 directly below Adjust Weapon Grip buttons. Keep legacy diagnostics
 available until loading is proven in both Community and Renewed/Spades.
+
+
+## Preset safety contract (agreed 2026-11-05)
+
+The user wants named, class-specific weapon-grip presets, with backups and
+mandatory confirmation before any deletion. Treat these as **acceptance
+requirements** for the first preset-capable release, not future polish.
+
+### Identity, classes, and names
+
+- Detect the currently equipped class automatically. The native
+  **Adjust Weapon Grip** section shows **only presets for that class**.
+  When no class can be identified safely, disable Save and Load instead of
+  guessing. Class-switching must never delete or migrate other presets.
+- Scope presets by **character + class + controller profile**. Capture and
+  revalidate scope before both Save and Load, including if the class changes
+  while the Settings panel is open. Never apply a preset belonging to another
+  class/controller/character, even if a stale UI row is clicked.
+- Every preset has an immutable unique internal ID (e.g. GUID), independent
+  of its editable human-readable display name. File paths are based on IDs,
+  **not user-entered names**. Two classes may use the same display name.
+- Provide a native PowerUI text field / game-supported VR text entry for
+  **Save Current as New Preset**, plus Rename later. Trim and validate names
+  (non-empty, sensible maximum length, safely rendered as text rather than
+  injected HTML). Avoid confusing duplicate names within the same scope.
+- Save As **creates a new preset** by default. Overwriting an existing preset
+  requires a distinct Replace action, a confirmation showing the target name,
+  and a backup of the old revision. Never silently replace because the user
+  typed an existing name.
+
+### Storage and recovery
+
+- Store local preset files **outside the mod DLL / release asset / mod
+  install directory**, under a documented durable BepInEx user-data path.
+  RebornManager updates, plugin version changes, or class switches must
+  **not clear, overwrite, reset, or prune** that directory.
+- Use a schema-versioned format; store an explicit class/controller/character
+  scope, immutable ID, display name, created/modified timestamps, enabled
+  flag and six verified grip values. Validate finite numbers and class
+  identity before Save/Load. Unknown future schema versions are
+  read-only and must not be overwritten with empty defaults.
+- Prefer one independent data file per preset rather than replacing an entire
+  collection with one save operation. Write changes using a temp file,
+  flush it, validate it, then atomic rename/replace. Keep the previous
+  good revision until the new one is definitely committed.
+- Make a timestamped copy of the prior revision **before** Rename, Replace
+  or Delete; provide a manual **Back Up / Export Presets** action. Do not
+  silently expire backups in the first release.
+- On startup, missing/corrupt/partially written files produce a visible
+  recoverable error; never interpret read failure as "no presets" and then
+  save an empty collection over good data.
+- No raw storage keys, account details or character identifiers in ordinary
+  diagnostic logs.
+
+### Delete, undo, and protection from mistakes
+
+- **Every Delete requires an explicit second-step confirmation** in the
+  native UI identifying the preset's display name and class, with separate
+  **Cancel** and **Confirm Delete** actions. No single-click destructive
+  deletion; Delete must never fire when selecting or loading a preset.
+- "Delete" moves the preset to a **recoverable Trash**, not irreversible
+  deletion. Provide **Restore** and a one-click Undo confirmation after
+  deletion. Backups and Trash stay intact across updates/restarts.
+- Do not automatically empty Trash or delete backups. A potential permanent
+  removal/cleanup feature is a separate explicit future decision, not part
+  of the initial preset workflow.
+- Loading a preset is **non-destructive to the saved preset**; before
+  changing game PlayerPrefs, backup the currently active grip values and
+  expose **Restore Previous Grip** for instant rollback.
+- The first Load/apply version must fail closed if the vanilla key mapping,
+  active class/controller, or mapped refresh mechanism cannot be verified
+  on the actual client. Avoid writing directly into a weapon's transient
+  transform and avoid claiming a successful apply without observing it.
+
+### Native PowerUI target and acceptance tests
+
+Controls must appear **directly below the vanilla Adjust Weapon Grip
+buttons and above Relocation Anchors**. Native styling and VR interaction
+should behave like other settings; RebornMenu's generic config controls
+do not replace this interface.
+
+Before declaring presets ready, test the following on Renewed/Spades:
+
+1. Save two distinctly named Bard presets; switch to Runemage and verify
+   neither Bard preset appears, then return and verify both are still there.
+2. Save a Runemage preset with the same display name as a Bard preset;
+   ensure each is isolated, retained after relaunch, and only applies to
+   its class/controller scope.
+3. Rename a preset and relaunch. Confirm the immutable ID and grip values
+   survive; test a naming collision with an existing same-class preset.
+4. Click Delete -> Cancel: preset remains. Click Delete -> Confirm:
+   it moves to Trash and can be restored intact.
+5. Simulate a malformed preset file and a failed/partial write: existing
+   valid presets remain intact and user receives a safe error.
+6. Confirm RebornManager update/reinstall does not touch presets, Trash
+   or backups.
+7. Load a preset, validate the actual visible grip change, then
+   Restore Previous Grip and verify the undo. Repeat after a class switch.
