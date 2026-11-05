@@ -1,6 +1,6 @@
 # OrbusWeaponAdjustments
 
-Standalone BepInEx IL2CPP plugin for OrbusVR. **v0.2.0 is the first native Weapon Presets test release**: class-scoped names, Save New, Load, Rename, confirmed Trash deletion, Restore, and automatic original-grip import. All older diagnostic shortcuts are preserved.
+Standalone BepInEx IL2CPP plugin for OrbusVR. **v0.2.1 fixes character-scoped detection in the first Weapon Presets test release**: class-scoped names, Save New, Load, Rename, confirmed Trash deletion, Restore, and automatic original-grip import. All older diagnostic shortcuts are preserved.
 
 **First-test warning:** Source is not yet compiled/tested against the user's Renewed/Spades instance. It fails closed when the class, exact live PlayerPrefs keys, or vanilla rig refresh method cannot be verified. Open Settings → Adjust Weapon Grip to find the native preset section. A preset cannot load until its class's six reader keys and enable flag are known, so a class may show "pending" on its first visit. Don't use Reset on a valuable grip until the initial Original backup appears.
 
@@ -155,3 +155,21 @@ The add-on is inserted immediately after the game's existing **Toggle Weapon Adj
 **Limitations:** the renewed class mappings are metadata-verified but the v0.2.0 UI, GetFloat reader hooks and apply path require a first live test. The game may not expose an original's enable key until a native reset or a new adjustment event. In that case Load displays a safety message and **changes nothing**. Before reporting success, verify a class switch, a session relaunch and the physical weapon grip in VR. Don't assume that saving PlayerPrefs alone proves the rig visually refreshed.
 
 See `docs/PRESETS_V020_TEST.md` for step-by-step tests. Existing v0.1.4-v0.1.7 diagnostic sections above are retained for troubleshooting.
+
+## v0.2.1 context fix
+
+After v0.2.0 successfully inserted the native Weapon Presets section but showed
+"Character or class not ready", we corrected the character identity mapping.
+The old code used PlayerMenu.currentPlayerName (Renewed ng.seu), a menu-target
+field that may be unset or point to another player. v0.2.1 uses the actual
+local PlayerAvatar.playerDbId (Renewed cbn.beix, mapped by contiguous native
+field and property order). That identifier is hashed together with the
+active class and controller, never written to ordinary logs. The same stable
+identity is used for first-run cross-class imports. The menu now reports
+exactly which context stage is missing, without printing any player IDs, and
+**Back Up All Presets** remains available even when Save/Load are safely locked.
+
+**First-run safety:** do not reset or experiment with a valuable existing
+vanilla grip until the class-specific **Original Grip (Imported)** appears.
+This is still the first unverified live preset implementation; please share the
+new contextual status and log if the controls remain unavailable.
