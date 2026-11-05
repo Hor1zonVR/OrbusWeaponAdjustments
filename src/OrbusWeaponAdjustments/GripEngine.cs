@@ -553,34 +553,42 @@ internal static class GripEngine
         _apply!.Invoke(avatar, null);
     }
 
+    // UI receives plain language; logs retain the exact non-sensitive
+    // refusal stage without leaking character IDs, keys or preset values.
+    private static string RefuseLoad(string stage, string message)
+    {
+        Plugin.ModLog.LogWarning("[WeaponAdjustments/Presets] Load safely stopped: " + stage);
+        return message;
+    }
+
     internal static string Load(string id)
     {
         if (!_installed || _apply == null || !TryContext(out object? avatar, out GripSnapshot ctx) ||
             avatar is not Component owner)
-            return "Cannot verify active class/controller or native refresh; nothing changed.";
+            return RefuseLoad("class-not-ready", "Your class isn't ready yet. Close and reopen Settings, then try again. Your grip is unchanged.");
         GripPreset? p = PresetStore.List(ctx.Scope).FirstOrDefault(x => x.Id == id);
         if (p == null || p.Scope != ctx.Scope || p.ClassName != ctx.ClassName ||
             p.Controller != ctx.Controller || p.Keys.Length != 6 ||
             p.Values.Length != 6 || p.Values.Any(x => !float.IsFinite(x)) ||
             p.Keys.Distinct(StringComparer.Ordinal).Count() != 6)
-            return "Preset mismatch/invalid values; nothing changed.";
-        if (!PresetStore.HasOriginal(ctx.Scope)) return "Original not protected; load refused.";
+            return RefuseLoad("preset-mismatch", "This preset doesn't match your current class or its saved data is damaged. Nothing changed.");
+        if (!PresetStore.HasOriginal(ctx.Scope)) return RefuseLoad("original-unprotected", "Your original grip hasn't been backed up yet, so loading is locked for safety. Nothing changed.");
 
         // Exact keys must come from a real native reader or submit event,
         // never from an unverified class-name substitution alone.
         if (!LastKnown.TryGetValue(ctx.Scope, out GripSnapshot? observed) ||
             !p.Keys.SequenceEqual(observed.Keys, StringComparer.Ordinal))
-            return "Waiting for a verified live grip read for this class. No changes made.";
+            return RefuseLoad("live-keys-not-read", "Orbus hasn't read this class's grip settings yet. Switch classes and back, then try again. Your grip is unchanged.");
         string? flagKey = p.FlagKey ?? observed.FlagKey;
         if (flagKey == null && KnownFlags.TryGetValue(ctx.Scope, out var known) &&
             FlagMatchesKeys(known.key, p.Keys))
             flagKey = known.key;
         if (flagKey != null && !FlagMatchesKeys(flagKey, p.Keys))
-            return "Enable key does not match the six grip keys; nothing changed.";
+            return RefuseLoad("key-mismatch", "We couldn't safely match this preset to your weapon. Your grip is unchanged.");
         if (string.IsNullOrWhiteSpace(flagKey) ||
             (observed.FlagKey != null && flagKey != observed.FlagKey))
-            return "Vanilla enable-key not verified; load disabled rather than risk another class.";
-        if (p.FlagValue != 1) return "Preset has an invalid enable flag; load refused.";
+            return RefuseLoad("enable-key-unverified", "Your original preset is safely backed up, but Orbus hasn't confirmed how to apply it yet. Nothing was changed.");
+        if (p.FlagValue != 1) return RefuseLoad("invalid-enabled-flag", "This preset contains invalid grip information, so nothing was changed.");
 
         var previous = new GripSnapshot
         {
@@ -593,9 +601,10 @@ internal static class GripEngine
         previous.Values = p.Keys.Select((key, i) =>
             previous.Exists[i] ? PlayerPrefs.GetFloat(key) : 0f).ToArray();
         if (previous.Values.Any(x => !float.IsFinite(x)))
-            return "Previous grip is invalid; load refused.";
+            return RefuseLoad("invalid-current-grip", "Orbus returned an invalid grip position, so we didn't change anything.");
         var backup = PresetStore.BackupBeforeApply(previous);
-        if (!backup.ok) return "Backup failed; load cancelled: " + backup.message;
+        if (!backup.ok) return RefuseLoad("backup-failed",
+            "Couldn't save a safety backup of your current grip, so nothing was changed.");
 
         try
         {
@@ -603,7 +612,7 @@ internal static class GripEngine
             if (!TryContext(out object? again, out GripSnapshot check) ||
                 again is not Component after || check.Scope != ctx.Scope ||
                 after.GetInstanceID() != owner.GetInstanceID())
-                return "Character/class changed; no values altered (backup retained).";
+                return RefuseLoad("class-changed", "You changed class while loading. Nothing was applied.");
 
             for (int i = 0; i < 6; i++) PlayerPrefs.SetFloat(p.Keys[i], p.Values[i]);
             PlayerPrefs.SetInt(flagKey, 1);
@@ -622,7 +631,7 @@ internal static class GripEngine
                 FlagKey = flagKey, FlagValue = 1
             };
             Status = ctx.ClassName + ": " + p.Name + " loaded";
-            return "Loaded " + p.Name + ". Restore Previous Grip is available.";
+            return "Preset loaded: " + p.Name + ". Use Restore Previous Grip to undo.";
         }
         catch (Exception ex)
         {
@@ -631,9 +640,11 @@ internal static class GripEngine
             {
                 Plugin.ModLog.LogError("[WeaponAdjustments/Presets] Recovery failed: " +
                     rollback.GetType().Name + "; durable before-load snapshot was retained.");
-                return "Load failed AND automatic rollback failed. Use the saved backup before retrying.";
+                return RefuseLoad("automatic-rollback-failed",
+                "We couldn't restore the grip automatically. Don't load another preset yet; your recovery backup is still saved.");
             }
-            return "Load failed (" + ex.GetType().Name + "); previous grip restored.";
+            return RefuseLoad("apply-error-" + ex.GetType().Name,
+                "Couldn't apply that preset. Your previous grip was restored.");
         }
         finally { _ourWrite = false; }
     }

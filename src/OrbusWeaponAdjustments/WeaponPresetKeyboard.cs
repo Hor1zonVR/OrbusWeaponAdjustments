@@ -72,34 +72,43 @@ internal static class WeaponPresetKeyboard
 
             Type callbackType = show.GetParameters()[0].ParameterType;
             MethodInfo? invoke = callbackType.GetMethod("Invoke");
-            if (invoke?.ReturnType != typeof(void) ||
-                invoke.GetParameters().Length != 1 ||
-                invoke.GetParameters()[0].ParameterType != typeof(string))
+            if (invoke == null || invoke.ReturnType != typeof(void) ||
+                invoke.GetParameters().Length != 1)
             {
-                reason = "Native keyboard callback signature changed";
+                reason = "Game keyboard's callback could not be recognized";
+                return false;
+            }
+            Type valueType = invoke.GetParameters()[0].ParameterType;
+            // IL2CPP interop can expose the string as System.String OR an
+            // Il2CppSystem.String wrapper. The old exact typeof(string)
+            // check rejected the native callback before even opening it.
+            if (valueType != typeof(string) &&
+                valueType.FullName != "Il2CppSystem.String")
+            {
+                reason = "Game keyboard is using an unsupported text type";
                 return false;
             }
 
-            // This is deliberately the same IL2CPP delegate bridge used for
-            // RebornMenu's working PowerUI mouse-event listeners.
             object? converted = null;
-            Delegate managed = new Action<string>(value =>
-            {
-                try { finished(value ?? ""); }
-                catch (Exception ex)
-                {
-                    Plugin.ModLog.LogWarning("[WeaponAdjustments/Keyboard] Name callback failed: " +
-                        ex.GetType().Name);
-                }
-            });
+            ParameterExpression parameter = Expression.Parameter(valueType, "typedName");
+            MethodInfo objectToString = typeof(object).GetMethod("ToString")!;
+            Delegate managed = Expression.Lambda(
+                typeof(Action<>).MakeGenericType(valueType),
+                Expression.Call(
+                    Expression.Constant(finished),
+                    typeof(Action<string>).GetMethod("Invoke")!,
+                    Expression.Call(Expression.Convert(parameter, typeof(object)),
+                        objectToString)),
+                parameter).Compile();
+
             if (callbackType.IsInstanceOfType(managed))
                 converted = managed;
             else
             {
                 foreach (MethodInfo convert in typeof(DelegateSupport)
                     .GetMethods(BindingFlags.Public | BindingFlags.Static)
-                    .Where(m => m.Name == "ConvertDelegate" && m.IsGenericMethodDefinition &&
-                                m.GetParameters().Length == 1))
+                    .Where(m => m.Name == "ConvertDelegate" &&
+                                m.IsGenericMethodDefinition && m.GetParameters().Length == 1))
                 {
                     try
                     {
@@ -111,7 +120,7 @@ internal static class WeaponPresetKeyboard
                             break;
                         }
                     }
-                    catch { }
+                    catch { /* Try the next available interop converter. */ }
                 }
             }
             if (converted == null) { reason = "Could not bind the IL2CPP keyboard callback"; return false; }
@@ -127,6 +136,7 @@ internal static class WeaponPresetKeyboard
             KeepAlive.Add(managed);
             KeepAlive.Add(converted);
             show.Invoke(keyboard, new[] { converted });
+            Plugin.ModLog.LogInfo("[WeaponAdjustments/Keyboard] Requested native Orbus keyboard.");
             reason = "";
             return true;
         }

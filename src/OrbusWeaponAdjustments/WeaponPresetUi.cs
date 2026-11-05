@@ -31,6 +31,17 @@ public sealed class WeaponPresetUi : MonoBehaviour
     private bool _showTrash;
     private float _nextPoll;
     private string _lastBindWarning = "";
+    // Local, temporary naming editor. Nothing touches preset files until
+    // "Save Name" succeeds. This is a VR-pointer fallback when Orbus's
+    // native keyboard cannot be invoked on a particular client.
+    private bool _editingName;
+    private string _editorValue = "";
+    private string _editorScope = "";
+    private string? _editorPresetId;
+    private static readonly string[] EditorRows =
+    {
+        "1234567890", "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM-_"
+    };
 
     private void Awake() => _instance = this;
     private void OnDestroy()
@@ -108,6 +119,7 @@ public sealed class WeaponPresetUi : MonoBehaviour
         _deleteId = "";
         _showTrash = false;
         _message = "";
+        _editingName = false;
         GripEngine.TryImportOnFirstMenu();
         Refresh(true);
         Plugin.ModLog.LogInfo("[WeaponAdjustments/NativeUI] Opened dedicated presets in RebornMenu Mods tab.");
@@ -157,16 +169,20 @@ public sealed class WeaponPresetUi : MonoBehaviour
             .Append(Escape(text)).Append("</li></ul>");
     }
 
-    private void Bind(string id, Action handler)
+    private void Bind(string id, Action handler) => BindEvent(id, _ => handler());
+
+    private void BindEvent(string id, Action<object> handler)
     {
         object? element = ById(_document, id);
         if (element == null) return;
-        if (WeaponPointerEvents.Bind(element, "mousedown", _ =>
+        if (WeaponPointerEvents.Bind(element, "mousedown", evt =>
         {
-            try { handler(); }
+            try { handler(evt); }
             catch (Exception ex)
             {
-                _message = "Action failed: " + ex.GetType().Name;
+                _message = "That action couldn't be completed. Your saved presets are safe.";
+                Plugin.ModLog.LogWarning("[WeaponAdjustments/NativeUI] Button action failed: " +
+                    ex.GetType().Name);
                 Refresh(true);
             }
         }, out string reason)) return;
@@ -185,33 +201,110 @@ public sealed class WeaponPresetUi : MonoBehaviour
         Refresh(true);
     }
 
+    private string ToggleNativeAdjustment(object evt)
+    {
+        // Reuse the SAME exact handler that the game's General tab invokes;
+        // no grip transform manipulation and no replacement of vanilla UI.
+        if (!GripEngine.TryContext(out _, out _))
+            return "Select a class before adjusting its weapon.";
+        try
+        {
+            Type? menu = null;
+            foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try { menu = assembly.GetType("ng", false) ??
+                             assembly.GetType("PlayerMenu", false); }
+                catch { }
+                if (menu != null) break;
+            }
+            if (menu == null) return "Weapon adjustment isn't ready. Try General > Adjust Weapon Grip.";
+            string name = menu.Name == "ng" ? "emh" : "ToggleAdjustWeapon";
+            MethodInfo? method = menu.GetMethods(Flags).FirstOrDefault(m =>
+                m.Name == name && m.IsStatic && m.ReturnType == typeof(void) &&
+                m.GetParameters().Length == 1);
+            if (method == null ||
+                !method.GetParameters()[0].ParameterType.IsInstanceOfType(evt))
+                return "Couldn't open adjustment here. You can still use General > Adjust Weapon Grip.";
+            method.Invoke(null, new[] { evt });
+            return "Weapon adjustment toggled. Grip your weapon and press trigger to save.";
+        }
+        catch (Exception ex)
+        {
+            Plugin.ModLog.LogWarning("[WeaponAdjustments/NativeUI] Vanilla adjust handler: " +
+                (ex.InnerException ?? ex).GetType().Name);
+            return "Couldn't open weapon adjustment here. Use General > Adjust Weapon Grip.";
+        }
+    }
+
     private void AskForName(string currentName, string scope, string? presetId)
     {
+        _editingName = true;
+        _editorValue = currentName;
+        _editorScope = scope;
+        _editorPresetId = presetId;
+
+        // Try Orbus's built-in keyboard first, but ALWAYS expose the
+        // pointer-driven letter keys. This works even when native keyboard
+        // delegate conversion or headset keyboard support isn't available.
         bool opened = WeaponPresetKeyboard.Open(currentName, input =>
         {
-            if (!GripEngine.TryContext(out _, out GripSnapshot current) ||
-                current.Scope != scope)
-            {
-                _message = "Class or character changed; operation cancelled.";
-                Refresh(true);
-                return;
-            }
-            string name = (input ?? "").Trim();
-            if (name.Length == 0)
-            {
-                _message = "No name entered; nothing was changed.";
-                Refresh(true);
-                return;
-            }
-            Apply(() => presetId == null
-                ? GripEngine.SaveNamed(name)
-                : PresetStore.Rename(presetId, scope, name).message);
+            if (!_editingName || _editorScope != scope ||
+                _editorPresetId != presetId) return;
+            _editorValue = (input ?? "").Trim();
+            SaveEnteredName();
         }, out string reason);
         if (!opened)
         {
-            _message = reason + ". No preset was changed.";
-            Refresh(true);
+            Plugin.ModLog.LogWarning("[WeaponAdjustments/Keyboard] Native keyboard unavailable: " +
+                reason);
+            _message = "Orbus keyboard didn't open. Use the letter buttons below to name your preset.";
         }
+        else
+            _message = "Enter a name using the Orbus keyboard or the buttons below.";
+        Refresh(true);
+    }
+
+    private void SaveEnteredName()
+    {
+        if (!_editingName) return;
+        string name = _editorValue.Trim();
+        if (name.Length == 0)
+        {
+            _message = "Enter a name before saving.";
+            Refresh(true);
+            return;
+        }
+        if (!GripEngine.TryContext(out _, out GripSnapshot current) ||
+            current.Scope != _editorScope)
+        {
+            _message = "You changed class. Nothing was saved; open Save again.";
+            _editingName = false;
+            Refresh(true);
+            return;
+        }
+        string scope = _editorScope;
+        string? id = _editorPresetId;
+        _editingName = false;
+        Apply(() => id == null
+            ? GripEngine.SaveNamed(name)
+            : PresetStore.Rename(id, scope, name).message);
+    }
+
+    private void UpdateNamePreview()
+    {
+        // Retain the same native button nodes and their VR event handlers
+        // while typing. Rebuilding ~40 buttons per keypress would keep
+        // registering new IL2CPP delegates and leak native callbacks.
+        string shown = _editorValue.Length == 0 ? "Enter name..." : _editorValue;
+        if (!SetHtml(ById(_document, "wa-name-preview"), Escape(shown)))
+            Refresh(true);
+    }
+
+    private void AddNameCharacter(char ch)
+    {
+        if (!_editingName || _editorValue.Length >= 48) return;
+        _editorValue += ch;
+        UpdateNamePreview();
     }
 
     private void Refresh(bool force)
@@ -225,6 +318,7 @@ public sealed class WeaponPresetUi : MonoBehaviour
             _deleteId = "";
             _showTrash = false;
             _message = "";
+            _editingName = false;
             force = true;
         }
         IReadOnlyList<GripPreset> active = identified
@@ -233,7 +327,8 @@ public sealed class WeaponPresetUi : MonoBehaviour
             ? PresetStore.Deleted(scope) : Array.Empty<GripPreset>();
         string fingerprint = scope + "|" + GripEngine.Status + "|" + GripEngine.ContextStatus +
             "|" + PresetStore.Error + "|" + _message + "|" + _deleteId + "|" + _showTrash +
-            "|" + string.Join(",", active.Select(p => p.Id + p.Name)) +
+            "|" + _editingName + "|" + _editorPresetId + "|" +
+            string.Join(",", active.Select(p => p.Id + p.Name)) +
             "|" + string.Join(",", trash.Select(p => p.Id + p.Name));
         if (!force && fingerprint == _lastFingerprint) return;
 
@@ -257,7 +352,40 @@ public sealed class WeaponPresetUi : MonoBehaviour
             else
                 html.Append("<p style='font-size:12px;color:#895520;margin:3px 0 10px 0;'>")
                     .Append("Original grip import pending; no existing grip will be overwritten.</p>");
+            MenuButton(html, "wa-adjust", "Adjust Weapon Grip");
+            html.Append("<p style='font-size:12px;margin:2px 0 6px;'>")
+                .Append("Opens the same adjustment tool as General Settings.</p>");
             MenuButton(html, "wa-save", "Save Current Grip...");
+            if (_editingName)
+            {
+                html.Append("<div style='width:331px;border-top:1px solid #90795c;")
+                    .Append("border-bottom:1px solid #90795c;padding:7px 0;'>")
+                    .Append("<p style='font-size:13px;margin:2px;'>")
+                    .Append(_editorPresetId == null ? "Name your new preset:" : "Rename this preset:")
+                    .Append("</p><p id='wa-name-preview' style='font-size:15px;margin:4px;")
+                    .Append("background:#e0d0b0;padding:5px;min-height:20px;'>")
+                    .Append(Escape(_editorValue.Length == 0 ? "Enter name..." : _editorValue))
+                    .Append("</p>");
+                int keyNumber = 0;
+                for (int row = 0; row < EditorRows.Length; row++)
+                {
+                    html.Append("<div style='position:relative;height:35px;width:330px;'>");
+                    for (int k = 0; k < EditorRows[row].Length; k++)
+                    {
+                        string label = EditorRows[row][k].ToString();
+                        RowButton(html, "wa-key-" + keyNumber, label, 2 + k * 33, 31);
+                        keyNumber++;
+                    }
+                    html.Append("</div>");
+                }
+                html.Append("<div style='position:relative;height:38px;width:330px;'>");
+                RowButton(html, "wa-key-space", "Space", 2, 127);
+                RowButton(html, "wa-key-back", "Backspace", 142, 185);
+                html.Append("</div>");
+                MenuButton(html, "wa-key-save", "Save Name");
+                MenuButton(html, "wa-key-cancel", "Cancel");
+                html.Append("</div>");
+            }
             html.Append("<h4 style='font-size:15px;margin:10px 0 6px 0;'>")
                 .Append("Saved presets (").Append(active.Count).Append(")</h4>");
 
@@ -333,7 +461,33 @@ public sealed class WeaponPresetUi : MonoBehaviour
             Bind("wa-backup", () => Apply(() => PresetStore.BackupAll().message));
         if (!identified || !string.IsNullOrEmpty(PresetStore.Error)) return;
 
+        BindEvent("wa-adjust", evt => Apply(() => ToggleNativeAdjustment(evt)));
         Bind("wa-save", () => AskForName("", scope, null));
+        if (_editingName)
+        {
+            int keyNumber = 0;
+            foreach (string row in EditorRows)
+                foreach (char character in row)
+                {
+                    string id = "wa-key-" + keyNumber++;
+                    char letter = character;
+                    Bind(id, () => AddNameCharacter(letter));
+                }
+            Bind("wa-key-space", () => AddNameCharacter(' '));
+            Bind("wa-key-back", () =>
+            {
+                if (_editorValue.Length > 0)
+                    _editorValue = _editorValue.Substring(0, _editorValue.Length - 1);
+                UpdateNamePreview();
+            });
+            Bind("wa-key-save", SaveEnteredName);
+            Bind("wa-key-cancel", () =>
+            {
+                _editingName = false;
+                _message = "Naming cancelled; nothing changed.";
+                Refresh(true);
+            });
+        }
         for (int i = 0; i < Math.Min(40, active.Count); i++)
         {
             GripPreset preset = active[i];

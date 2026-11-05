@@ -1,8 +1,8 @@
 # OrbusWeaponAdjustments
 
-Standalone BepInEx IL2CPP plugin for OrbusVR. **v0.2.3 uses the reusable RebornMenu custom-page API to host the preset manager into WeaponAdjustments' own RebornMenu Mods page.** Vanilla General Settings is left untouched. Save and Rename use Orbus's native VR keyboard, and a compact class-specific list shows Load / Rename / Delete beside each named preset. Automatic originals, backups, Trash and the legacy diagnostics are preserved.
+Standalone BepInEx IL2CPP plugin for OrbusVR. **v0.2.4 adds the game's own weapon-adjustment button, usable on-page preset naming, and simpler load messages to the RebornMenu Mods preset manager into WeaponAdjustments' own RebornMenu Mods page.** Vanilla General Settings is left untouched. Save and Rename use Orbus's native VR keyboard, and a compact class-specific list shows Load / Rename / Delete beside each named preset. Automatic originals, backups, Trash and the legacy diagnostics are preserved.
 
-**First-test warning:** Source is not yet compiled/tested against the user's Renewed/Spades instance. It fails closed when the class, exact live PlayerPrefs keys, or vanilla rig refresh method cannot be verified. Open Settings → Adjust Weapon Grip to find the native preset section. A preset cannot load until its class's six reader keys and enable flag are known, so a class may show "pending" on its first visit. Don't use Reset on a valuable grip until the initial Original backup appears.
+**First-test warning:** The v0.2.4 additions still require a live Spades test. The preset manager is under Settings → Mods → WeaponAdjustments, not in the vanilla General Settings section. The mod fails closed when the class, exact live PlayerPrefs keys, or vanilla rig refresh method cannot be verified. A preset cannot load until its class's six reader keys and enable flag are known, so a class may show "pending" on its first visit. Don't use Reset on a valuable grip until the initial Original backup appears.
 
 Presets, Trash, immutable originals, exports and before-load backups live under `%LOCALAPPDATA%\\OrbusWeaponAdjustments\\Presets\\v1`, **outside RebornManager's instance and DLL update directories**. No network calls or manual DLL installation are required.
 
@@ -223,3 +223,37 @@ the WeaponPresetUi class or this plugin's GUID.
 
 See the RebornMenu repository's `docs/AUTOMATIC_MOD_SETTINGS.md` for
 the generic provider contract and a copyable example.
+
+## v0.2.4 — in-page adjustment, reliable naming and readable errors
+
+- **Adjust Weapon Grip** now appears at the top of the dedicated Mods page,
+  above Save. It invokes the original `PlayerMenu.ToggleAdjustWeapon(UIEvent)`
+  handler (`ng.emh` on Renewed/Spades) with the current PowerUI pointer
+  event. If the native event type cannot be verified, it refuses to invoke
+  the method and tells the user to use General instead. The vanilla General
+  button is **not removed or changed**.
+- Clicking **Save Current Grip** / **Rename** first attempts the native
+  Orbus VR keyboard (`lu.efy`). The IL2CPP callback bridge now accepts the
+  supported managed or wrapped string argument signature.
+- Whether the native keyboard opens or not, a temporary **in-page letter
+  keyboard** offers 0–9, A–Z, space, hyphen, underscore, backspace,
+  Save Name and Cancel. This uses the same verified PowerUI VR-click
+  binding as the preset list, rather than requiring an HTML text input.
+  No name is saved until Save Name is selected.
+- The name display updates in place instead of rebuilding dozens of
+  IL2CPP event listeners for each character.
+- **Load Preset** refusal messages now explain in plain English why the
+  grip wasn't changed; safe non-sensitive stage codes are logged to
+  BepInEx. If Orbus has not verified the original's enable/save key, it
+  is still protected and **loading remains disabled** rather than
+  guessing or overwriting vanilla adjustments.
+- No preset storage schema, file location, class scoping, original snapshot,
+  backup, Trash or delete-confirmation behavior changed.
+- Tested log from the previous v0.2.2 build confirmed successful mod
+  startup, original page injection and character/class detection, but did
+  **not** report a native keyboard exception. VR headset compositor errors
+  in ErrorLog are not evidence that these game UI calls failed.
+
+**RebornMenu itself needs no source update.** The existing custom-page
+provider mechanism works with v0.2.11+; v0.2.12+ is preferred for the
+generic developer API.
