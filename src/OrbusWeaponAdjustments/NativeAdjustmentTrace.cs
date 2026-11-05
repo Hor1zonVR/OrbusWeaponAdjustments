@@ -123,6 +123,10 @@ internal static class NativeAdjustmentTrace
             }
         }
 
+        // Explicit guard also assures the nullable analyser after the
+        // Community/Renewed verification branches.
+        if (adjuster == null || menu == null) return;
+
         string submit = renewed ? "mnh" : "SubmitAdjust";
         string gripped = renewed ? "mni" : "WeaponGripped";
         string ungripped = renewed ? "mnj" : "WeaponUngripped";
