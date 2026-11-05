@@ -228,7 +228,7 @@ the vanilla reset/apply flow by directly accumulating transforms.
 
 Readable `MagicalActual.RigBasedAdjustment` = obfuscated `cgr` (same
 ten fields in the same order/offsets, six `Vector3` adjustment fields,
-`Quaternion` at 0x30, final `bool` at 0x88, identical eight methods).
+`Quaternion` at 0x30, final `bool` at 0x88, matching method order).
 
 | Community | Renewed/Spades metadata |
 | --- | --- |
