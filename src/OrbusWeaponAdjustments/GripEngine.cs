@@ -316,7 +316,7 @@ internal static class GripEngine
         if (!keys.All(k => PlayerPrefs.HasKey(k))) { p.Missing = true; return; }
         if (!TryContext(out _, out GripSnapshot ctx) || ctx.Scope != p.Snapshot.Scope) return;
         ctx.Keys = keys;
-        ctx.Values = keys.Select(PlayerPrefs.GetFloat).ToArray();
+        ctx.Values = keys.Select(key => PlayerPrefs.GetFloat(key)).ToArray();
         if (ctx.Values.Any(x => !float.IsFinite(x))) return;
         if (KnownFlags.TryGetValue(ctx.Scope, out var known) &&
             FlagMatchesKeys(known.key, keys))
@@ -388,7 +388,7 @@ internal static class GripEngine
                 Scope = PresetStore.HashScope(
                     Member(_menuType, renewed ? "seu" : "currentPlayerName") as string ?? "",
                     className, sample.Controller),
-                Keys = candidate, Values = candidate.Select(PlayerPrefs.GetFloat).ToArray(),
+                Keys = candidate, Values = candidate.Select(key => PlayerPrefs.GetFloat(key)).ToArray(),
                 FlagKey = sample.FlagKey != null && sample.FlagKey.Contains(sample.ClassName,
                     StringComparison.Ordinal)
                     ? sample.FlagKey.Replace(sample.ClassName, className, StringComparison.Ordinal) : null,
@@ -468,7 +468,7 @@ internal static class GripEngine
             snapshot.FlagKey = flag.key;
             snapshot.FlagValue = flag.value;
         }
-        snapshot.Values = snapshot.Keys.Select(PlayerPrefs.GetFloat).ToArray();
+        snapshot.Values = snapshot.Keys.Select(key => PlayerPrefs.GetFloat(key)).ToArray();
         return snapshot.Values.All(float.IsFinite);
     }
 
