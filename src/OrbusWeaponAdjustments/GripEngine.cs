@@ -623,7 +623,16 @@ internal static class GripEngine
             _ourWrite = true;
             RestoreKeys(undo, avatar);
             _undo = null;
-            LastKnown.Remove(undo.Scope); // force a fresh native read on next class refresh
+            // Keep the verified KEY identity even if the restored vanilla
+            // default had no saved float keys. Save Current still rejects
+            // unset keys, but a later Load can safely restore a preset.
+            LastKnown[undo.Scope] = new GripSnapshot
+            {
+                Scope = undo.Scope, ClassName = undo.ClassName,
+                Controller = undo.Controller, Keys = (string[])undo.Keys.Clone(),
+                Values = (float[])undo.Values.Clone(), FlagKey = undo.FlagKey,
+                FlagValue = undo.FlagValue
+            };
             return "Previous grip restored. Before/after backups remain available.";
         }
         catch (Exception ex)
