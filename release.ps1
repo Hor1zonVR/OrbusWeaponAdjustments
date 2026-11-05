@@ -22,7 +22,7 @@ try {
     Write-Host ''
     Write-Host '====================================================' -ForegroundColor Cyan
     Write-Host ' OrbusWeaponAdjustments -> GitHub Releases -> RM' -ForegroundColor Cyan
-    Write-Host ' v0.1.3 read-only diagnostic; NO weapon modifications' -ForegroundColor Yellow
+    Write-Host ' v0.1.4 read-only diagnostic; NO weapon modifications' -ForegroundColor Yellow
     Write-Host '====================================================' -ForegroundColor Cyan
     Write-Host ''
 

@@ -5,6 +5,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using BepInEx;
+using Il2CppInterop.Runtime;
 using UnityEngine;
 
 namespace OrbusWeaponAdjustments;
@@ -32,6 +33,9 @@ public sealed class LiveAdjustmentCapture : MonoBehaviour
         public string Path = "";
         public int Rank;
         public bool WeaponCandidate;
+        public int LastParentId;
+        public string LastParent = "";
+        public bool DestructionReported;
         public Vector3 FirstPos, LastPos, FirstWorldPos, LastWorldPos;
         public Quaternion FirstRot, LastRot, FirstWorldRot, LastWorldRot;
         public bool FirstActive, LastActive;
@@ -163,6 +167,8 @@ public sealed class LiveAdjustmentCapture : MonoBehaviour
                 candidates[id] = new Watch {
                     Transform = t, Path = PathOf(t), Rank = rank,
                     WeaponCandidate = weapon,
+                    LastParentId = t.parent != null ? t.parent.GetInstanceID() : 0,
+                    LastParent = t.parent != null ? PathOf(t.parent) : "(scene root)",
                     FirstPos = t.localPosition, LastPos = t.localPosition,
                     FirstRot = t.localRotation, LastRot = t.localRotation,
                     FirstWorldPos = t.position, LastWorldPos = t.position,
@@ -244,11 +250,29 @@ public sealed class LiveAdjustmentCapture : MonoBehaviour
                     " weapon=" + w.WeaponCandidate +
                     " local=" + V(w.FirstPos) + " " + Q(w.FirstRot) +
                     " world=" + V(w.FirstWorldPos) +
+                    " parent=" + w.LastParent + " parentId=" + w.LastParentId +
                     " components=" + ComponentTypes(w.Transform));
         }
         Add($"FOCUSED SCAN inspected={inspected} directWeapon={directWeaponHits} " +
             $"rigAnchors={rigHits} matches={candidates.Count} " +
             $"added={added} replaced={replaced} watching={_watched.Count}");
+    }
+
+    private static string NativeType(Component c)
+    {
+        try
+        {
+            IntPtr klass = IL2CPP.il2cpp_object_get_class(c.Pointer);
+            if (klass != IntPtr.Zero)
+            {
+                string ns = IL2CPP.il2cpp_class_get_namespace_(klass) ?? "";
+                string name = IL2CPP.il2cpp_class_get_name_(klass) ?? "";
+                if (!string.IsNullOrWhiteSpace(name))
+                    return ns.Length > 0 ? ns + "." + name : name;
+            }
+        }
+        catch { }
+        return c.GetType().FullName ?? c.GetType().Name;
     }
 
     private static string ComponentTypes(Transform t)
@@ -259,13 +283,14 @@ public sealed class LiveAdjustmentCapture : MonoBehaviour
             foreach (Component c in t.gameObject.GetComponents<Component>())
             {
                 if (c == null) continue;
-                names.Add(c.GetType().Name);
-                if (names.Count >= 12) break;
+                names.Add(NativeType(c));
+                if (names.Count >= 16) break;
             }
             return "[" + string.Join(",", names) + "]";
         }
         catch { return "[unavailable]"; }
     }
+
     private void ReadInputs()
     {
         if (_xrNodeType != null)
@@ -320,7 +345,36 @@ public sealed class LiveAdjustmentCapture : MonoBehaviour
         {
             try
             {
-                if (w.Transform == null) continue;
+                if (w.Transform == null)
+                {
+                    if (!w.DestructionReported && w.WeaponCandidate)
+                    {
+                        w.DestructionReported = true;
+                        Add("DESTROYED DURING CAPTURE " + w.Path +
+                            " lastParent=" + w.LastParent + " lastLocal=" +
+                            V(w.LastPos) + " lastLocalRot=" + Q(w.LastRot));
+                    }
+                    continue;
+                }
+                // A very large LOCAL jump with little WORLD movement means
+                // reparenting is likely. Record the true hierarchy before
+                // updating transforms so we can identify the attachment target.
+                Transform? parent = w.Transform.parent;
+                int parentId = parent != null ? parent.GetInstanceID() : 0;
+                if (w.WeaponCandidate && parentId != w.LastParentId)
+                {
+                    string newParent = parent != null ? PathOf(parent) : "(scene root)";
+                    Add("PARENT CHANGE " + w.Path +
+                        " old=[" + w.LastParent + "]#" + w.LastParentId +
+                        " new=[" + newParent + "]#" + parentId +
+                        " nowPath=" + PathOf(w.Transform) +
+                        " local=" + V(w.Transform.localPosition) +
+                        " localRot=" + Q(w.Transform.localRotation) +
+                        " world=" + V(w.Transform.position) +
+                        " nativeComponents=" + ComponentTypes(w.Transform));
+                    w.LastParent = newParent;
+                    w.LastParentId = parentId;
+                }
                 Vector3 p = w.Transform.localPosition, world = w.Transform.position;
                 Quaternion r = w.Transform.localRotation, worldRot = w.Transform.rotation;
                 bool active = w.Transform.gameObject.activeInHierarchy;
@@ -358,7 +412,7 @@ public sealed class LiveAdjustmentCapture : MonoBehaviour
         {
             Add("STOP: "+reason);
             var sb = new StringBuilder(150000);
-            sb.AppendLine("ORBUS WEAPON ADJUSTMENTS LIVE DIAGNOSTIC v0.1.3");
+            sb.AppendLine("ORBUS WEAPON ADJUSTMENTS LIVE DIAGNOSTIC v0.1.4");
             sb.AppendLine("Read-only: these input edges are NOT verified game callbacks.");
             sb.AppendLine("Review paths for player names before sharing. No UI text or network data collected.");
             sb.AppendLine($"reason={reason} seconds={Time.realtimeSinceStartup-_started:0.00} samples={_samples} watched={_watched.Count} triggers={_presses} dropped={_overflow}");
@@ -369,7 +423,13 @@ public sealed class LiveAdjustmentCapture : MonoBehaviour
             {
                 try
                 {
-                    if (w.Transform==null) { sb.AppendLine("DESTROYED "+w.Path); continue; }
+                    if (w.Transform==null) {
+                        sb.AppendLine("DESTROYED " + w.Path +
+                            " lastParent=" + w.LastParent +
+                            " lastLocal=" + V(w.LastPos) +
+                            " lastLocalRot=" + Q(w.LastRot));
+                        continue;
+                    }
                     sb.AppendLine(w.Path+" weapon="+w.WeaponCandidate+" start="+V(w.FirstPos)+" "+Q(w.FirstRot)+
                         " end="+V(w.Transform.localPosition)+" "+Q(w.Transform.localRotation)+
                         " worldBefore="+V(w.FirstWorldPos)+" worldAfter="+V(w.Transform.position)+
