@@ -22,7 +22,7 @@ try {
     Write-Host ''
     Write-Host '====================================================' -ForegroundColor Cyan
     Write-Host ' OrbusWeaponAdjustments -> GitHub Releases -> RM' -ForegroundColor Cyan
-    Write-Host ' v0.2.4 native adjustment button, pointer-key naming and friendly load errors' -ForegroundColor Yellow
+    Write-Host ' v0.2.5 active grip indicator, compact rows and direct class weapon adjustment' -ForegroundColor Yellow
     Write-Host '====================================================' -ForegroundColor Cyan
     Write-Host ''
 

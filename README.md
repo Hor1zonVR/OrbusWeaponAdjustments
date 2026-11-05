@@ -1,6 +1,6 @@
 # OrbusWeaponAdjustments
 
-Standalone BepInEx IL2CPP plugin for OrbusVR. **v0.2.4 adds the game's own weapon-adjustment button, usable on-page preset naming, and simpler load messages to the RebornMenu Mods preset manager into WeaponAdjustments' own RebornMenu Mods page.** Vanilla General Settings is left untouched. Save and Rename use Orbus's native VR keyboard, and a compact class-specific list shows Load / Rename / Delete beside each named preset. Automatic originals, backups, Trash and the legacy diagnostics are preserved.
+Standalone BepInEx IL2CPP plugin for OrbusVR. **v0.2.5 adds verified active-grip highlighting, a clean two-row preset layout, and direct active-class weapon adjustment to the RebornMenu Mods page into WeaponAdjustments' own RebornMenu Mods page.** Vanilla General Settings is left untouched. Save and Rename use Orbus's native VR keyboard, and a compact class-specific list shows Load / Rename / Delete beside each named preset. Automatic originals, backups, Trash and the legacy diagnostics are preserved.
 
 **First-test warning:** The v0.2.4 additions still require a live Spades test. The preset manager is under Settings → Mods → WeaponAdjustments, not in the vanilla General Settings section. The mod fails closed when the class, exact live PlayerPrefs keys, or vanilla rig refresh method cannot be verified. A preset cannot load until its class's six reader keys and enable flag are known, so a class may show "pending" on its first visit. Don't use Reset on a valuable grip until the initial Original backup appears.
 
@@ -257,3 +257,44 @@ the generic provider contract and a copyable example.
 **RebornMenu itself needs no source update.** The existing custom-page
 provider mechanism works with v0.2.11+; v0.2.12+ is preferred for the
 generic developer API.
+
+## v0.2.5 — active grip, cleaner list, working adjustment action
+
+- **Only a verified current grip is green.** Green now means the six current
+  PlayerPrefs grip values (three rotation, three position) match a stored
+  preset AND its native enable flag has been verified. The list reports
+  IN USE, MATCH (when two saved presets are identical), or BACKUP
+  (for protected originals that are not currently active).
+- The imported original stays named **Original Grip** in the menu without
+  modifying its on-disk name or its protected backup. A user-renamed
+  original retains its custom label.
+- Current grip summary at top: in-use name, custom/unsaved, multiple
+  identical presets or unverified. Never use a green indicator merely
+  because a file has Original=true.
+- Each preset has a dedicated name/status line, then a second line of
+  equally spaced Load / Rename / Delete buttons, preventing overlap.
+- After a successful Load, a clear green Preset loaded message is shown
+  and the matching row is green. Loading STILL uses the same six-float
+  readback, before-load rollback, per-class scope and enable-key checks.
+- **Adjust Weapon Grip** now calls the *active PlayerClass* instance's
+  native no-parameter ToggleAdjustWeapon method: Community
+  PlayerClass.ToggleAdjustWeapon() maps to Renewed/Spades cei.lnv().
+  The old ng.emh(UIEvent) bridge failed because the Mods pointer's
+  MouseEvent wasn't the vanilla callback's UIEvent.
+- Native OrbusKeyboard.lu.efy repeatedly threw Il2CppException in the
+  v0.2.4 live log. We now use our verified on-page VR-pointer keyboard
+  directly, without triggering those exceptions on Save or Rename.
+- When a class (e.g. Ranger) has no pre-existing native saved grip, the
+  page explains that the user must perform and confirm an adjustment
+  before saving their first preset. It does not synthesize fake originals.
+- The bottom controls are compact Undo Last Load / View Trash, with
+  Back Up All Presets below. Backups are still local copies; portable
+  cross-install Export/Import is not yet implemented.
+
+**Unchanged:** PresetStore v1 schema, per-character/class/controller scope,
+originals, backups, Trash, confirmed deletion, all six rotation/position
+values, and existing diagnostics. The actual VR behaviour of cei.lnv()
+still needs a live Spades test, as do the rotation visuals after loading.
+RebornMenu v0.2.11+ already supports the page; no RebornMenu update.
+
+See docs/PRESETS_V025_TEST.md for verification steps.

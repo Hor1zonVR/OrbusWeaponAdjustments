@@ -27,6 +27,9 @@ public sealed class WeaponPresetUi : MonoBehaviour
     private string _scope = "";
     private string _deleteId = "";
     private string _message = "";
+    private bool _messageSuccess;
+    private string _lastLoadedScope = "";
+    private string _lastLoadedId = "";
     private string _lastFingerprint = "";
     private bool _showTrash;
     private float _nextPoll;
@@ -119,6 +122,7 @@ public sealed class WeaponPresetUi : MonoBehaviour
         _deleteId = "";
         _showTrash = false;
         _message = "";
+        _messageSuccess = false;
         _editingName = false;
         GripEngine.TryImportOnFirstMenu();
         Refresh(true);
@@ -198,69 +202,70 @@ public sealed class WeaponPresetUi : MonoBehaviour
     private void Apply(Func<string> action)
     {
         _message = action();
+        _messageSuccess = false;
         Refresh(true);
     }
 
-    private string ToggleNativeAdjustment(object evt)
+    private void LoadPreset(string id)
     {
-        // Reuse the SAME exact handler that the game's General tab invokes;
-        // no grip transform manipulation and no replacement of vanilla UI.
-        if (!GripEngine.TryContext(out _, out _))
-            return "Select a class before adjusting its weapon.";
+        string result = GripEngine.Load(id);
+        _message = result;
+        _messageSuccess = result.StartsWith("Preset loaded:", StringComparison.Ordinal);
+        if (_messageSuccess && GripEngine.TryContext(out _, out GripSnapshot ctx))
+        {
+            _lastLoadedScope = ctx.Scope;
+            _lastLoadedId = id;
+        }
+        Refresh(true);
+    }
+
+    private string ToggleNativeAdjustment()
+    {
+        // Native PlayerClass.ToggleAdjustWeapon() -> Renewed/Spades cei.lnv().
+        // Unlike ng.emh(UIEvent), this is independent of which PowerUI tab
+        // dispatched the pointer event. The class mapping comes from exact
+        // Community/Renewed field offsets and ordered method signatures.
+        if (!GripEngine.TryContext(out object? avatar, out _) || avatar == null)
+            return "Select a class before adjusting your weapon.";
         try
         {
-            Type? menu = null;
-            foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                try { menu = assembly.GetType("ng", false) ??
-                             assembly.GetType("PlayerMenu", false); }
-                catch { }
-                if (menu != null) break;
-            }
-            if (menu == null) return "Weapon adjustment isn't ready. Try General > Adjust Weapon Grip.";
-            string name = menu.Name == "ng" ? "emh" : "ToggleAdjustWeapon";
-            MethodInfo? method = menu.GetMethods(Flags).FirstOrDefault(m =>
-                m.Name == name && m.IsStatic && m.ReturnType == typeof(void) &&
-                m.GetParameters().Length == 1);
-            if (method == null ||
-                !method.GetParameters()[0].ParameterType.IsInstanceOfType(evt))
-                return "Couldn't open adjustment here. You can still use General > Adjust Weapon Grip.";
-            method.Invoke(null, new[] { evt });
-            return "Weapon adjustment toggled. Grip your weapon and press trigger to save.";
+            bool renewed = avatar.GetType().Name == "cbn";
+            object? active = Get(avatar, renewed ? "becm" : "currentActiveClass");
+            if (active == null) return "Your active class is not ready yet.";
+            Type type = active.GetType();
+            if (renewed ? type.Name != "cei" :
+                type.FullName != "MagicalActual.PlayerClass")
+                return "This class doesn't expose the expected weapon adjustment control.";
+
+            string name = renewed ? "lnv" : "ToggleAdjustWeapon";
+            MethodInfo? method = type.GetMethods(Flags).FirstOrDefault(m =>
+                m.Name == name && !m.IsStatic &&
+                m.ReturnType == typeof(void) && m.GetParameters().Length == 0);
+            if (method == null)
+                return "The game's weapon adjustment method was not found.";
+            method.Invoke(active, null);
+            Plugin.ModLog.LogInfo("[WeaponAdjustments/NativeUI] Called active-class weapon adjustment toggle.");
+            return "Weapon adjustment toggled. Move the weapon and press trigger to confirm.";
         }
         catch (Exception ex)
         {
-            Plugin.ModLog.LogWarning("[WeaponAdjustments/NativeUI] Vanilla adjust handler: " +
+            Plugin.ModLog.LogWarning("[WeaponAdjustments/NativeUI] Active-class adjust failed: " +
                 (ex.InnerException ?? ex).GetType().Name);
-            return "Couldn't open weapon adjustment here. Use General > Adjust Weapon Grip.";
+            return "Weapon adjustment couldn't open for this class. Your presets are unchanged.";
         }
     }
 
     private void AskForName(string currentName, string scope, string? presetId)
     {
+        // Repeated lu.efy(...) calls on this Spades client throw Il2CppException.
+        // Use the VERIFIED PowerUI VR-pointer keyboard and avoid the failed
+        // native route. Presets are untouched until Save Name is selected.
         _editingName = true;
         _editorValue = currentName;
         _editorScope = scope;
         _editorPresetId = presetId;
-
-        // Try Orbus's built-in keyboard first, but ALWAYS expose the
-        // pointer-driven letter keys. This works even when native keyboard
-        // delegate conversion or headset keyboard support isn't available.
-        bool opened = WeaponPresetKeyboard.Open(currentName, input =>
-        {
-            if (!_editingName || _editorScope != scope ||
-                _editorPresetId != presetId) return;
-            _editorValue = (input ?? "").Trim();
-            SaveEnteredName();
-        }, out string reason);
-        if (!opened)
-        {
-            Plugin.ModLog.LogWarning("[WeaponAdjustments/Keyboard] Native keyboard unavailable: " +
-                reason);
-            _message = "Orbus keyboard didn't open. Use the letter buttons below to name your preset.";
-        }
-        else
-            _message = "Enter a name using the Orbus keyboard or the buttons below.";
+        _messageSuccess = false;
+        _message = "Choose letters below, then select Save Name.";
         Refresh(true);
     }
 
@@ -307,6 +312,33 @@ public sealed class WeaponPresetUi : MonoBehaviour
         UpdateNamePreview();
     }
 
+    private static string VisiblePresetName(GripPreset preset)
+    {
+        // Clean up ONLY the two automatically generated legacy labels.
+        // Preserve any custom name given to a protected original record.
+        if (preset.Original && preset.Name == "Original Grip (Imported)")
+            return "Original Grip";
+        if (preset.Original && preset.Name == "First Grip Captured After Install")
+            return "First Captured Grip";
+        return preset.Name;
+    }
+
+    private static List<string> MatchingCurrentPresets(
+        IReadOnlyList<GripPreset> presets, GripSnapshot live, bool flagVerified)
+    {
+        if (!flagVerified || live.Keys.Length != 6 || live.Values.Length != 6)
+            return new List<string>();
+        // All six values are compared: indices 0-2 are saved rotation,
+        // indices 3-5 are saved position. No rounding or transform writes.
+        return presets.Where(p => p.Scope == live.Scope &&
+            p.ClassName == live.ClassName && p.Controller == live.Controller &&
+            p.Keys.Length == 6 && p.Values.Length == 6 &&
+            p.Keys.SequenceEqual(live.Keys, StringComparer.Ordinal) &&
+            Enumerable.Range(0, 6).All(i =>
+                Math.Abs(p.Values[i] - live.Values[i]) <= 0.0001f))
+            .Select(p => p.Id).ToList();
+    }
+
     private void Refresh(bool force)
     {
         if (_root == null || _document == null) return;
@@ -318,6 +350,7 @@ public sealed class WeaponPresetUi : MonoBehaviour
             _deleteId = "";
             _showTrash = false;
             _message = "";
+            _messageSuccess = false;
             _editingName = false;
             force = true;
         }
@@ -325,15 +358,29 @@ public sealed class WeaponPresetUi : MonoBehaviour
             ? PresetStore.List(scope) : Array.Empty<GripPreset>();
         IReadOnlyList<GripPreset> trash = identified && _showTrash
             ? PresetStore.Deleted(scope) : Array.Empty<GripPreset>();
+        GripSnapshot liveGrip = new();
+        bool hasLiveGrip = identified && GripEngine.TryCurrent(out liveGrip);
+        bool verifiedFlag = hasLiveGrip && !string.IsNullOrEmpty(liveGrip.FlagKey) &&
+            PlayerPrefs.HasKey(liveGrip.FlagKey) &&
+            PlayerPrefs.GetInt(liveGrip.FlagKey) == 1;
+        List<string> matching = hasLiveGrip
+            ? MatchingCurrentPresets(active, liveGrip, verifiedFlag)
+            : new List<string>();
+        bool chosenThisSession = _lastLoadedScope == scope &&
+            matching.Contains(_lastLoadedId);
+        string activeId = chosenThisSession ? _lastLoadedId :
+            matching.Count == 1 ? matching[0] : "";
         string fingerprint = scope + "|" + GripEngine.Status + "|" + GripEngine.ContextStatus +
             "|" + PresetStore.Error + "|" + _message + "|" + _deleteId + "|" + _showTrash +
-            "|" + _editingName + "|" + _editorPresetId + "|" +
+            "|" + _editingName + "|" + _editorPresetId + "|" + _messageSuccess +
+            "|" + hasLiveGrip + "|" + verifiedFlag + "|" + activeId + "|" +
+            string.Join(",", matching) + "|" +
             string.Join(",", active.Select(p => p.Id + p.Name)) +
             "|" + string.Join(",", trash.Select(p => p.Id + p.Name));
         if (!force && fingerprint == _lastFingerprint) return;
 
         var html = new StringBuilder(4200);
-        html.Append("<h4 style='margin:3px 0 4px 0;font-size:20px;'>Weapon Presets</h4>");
+        html.Append("<h4 style='margin:2px 0 3px;font-size:19px;'>Weapon Adjustments</h4>");
         if (!identified)
         {
             html.Append("<p style='font-size:13px;margin:6px 0;'>")
@@ -342,20 +389,39 @@ public sealed class WeaponPresetUi : MonoBehaviour
         }
         else
         {
-            html.Append("<p style='font-size:13px;margin:1px 0 8px 0;'>")
+            html.Append("<p style='font-size:13px;margin:1px 0 7px;'>")
                 .Append(Escape(current.ClassName)).Append(" &middot; ")
                 .Append(Escape(current.Controller)).Append("</p>");
             bool originalProtected = PresetStore.HasOriginal(scope);
-            if (originalProtected)
-                html.Append("<p style='font-size:12px;color:#386034;margin:3px 0 10px 0;'>")
-                    .Append("Original adjustment backed up.</p>");
+            string currentLabel;
+            if (activeId.Length > 0)
+                currentLabel = "In use: " + VisiblePresetName(active.First(p => p.Id == activeId));
+            else if (matching.Count > 1)
+                currentLabel = "Current grip matches " + matching.Count + " identical presets";
+            else if (verifiedFlag)
+                currentLabel = "In use: Custom / unsaved grip";
             else
-                html.Append("<p style='font-size:12px;color:#895520;margin:3px 0 10px 0;'>")
-                    .Append("Original grip import pending; no existing grip will be overwritten.</p>");
-            MenuButton(html, "wa-adjust", "Adjust Weapon Grip");
-            html.Append("<p style='font-size:12px;margin:2px 0 6px;'>")
-                .Append("Opens the same adjustment tool as General Settings.</p>");
-            MenuButton(html, "wa-save", "Save Current Grip...");
+                currentLabel = "In use: Not verified yet";
+            html.Append("<div style='width:321px;padding:5px 7px;margin:3px 0 8px;")
+                .Append("background:#d4c2a3;border:1px solid #a58e6e;'>")
+                .Append("<span style='font-size:13px;color:")
+                .Append(activeId.Length > 0 ? "#247137" : "#61482f")
+                .Append(";'>").Append(Escape(currentLabel)).Append("</span></div>");
+            if (!_editingName)
+                MenuButton(html, "wa-adjust", "Adjust Weapon Grip");
+            if (!originalProtected && !hasLiveGrip)
+                html.Append("<p style='font-size:12px;margin:4px 0 6px;'>")
+                    .Append("No saved adjustment for this class yet. Adjust your weapon, ")
+                    .Append("press trigger to confirm, then come back to save a preset.</p>");
+            else if (!originalProtected)
+                html.Append("<p style='font-size:12px;margin:4px 0 6px;'>")
+                    .Append("Protecting this class's first grip. Preset saving becomes ")
+                    .Append("available when the backup is ready.</p>");
+            else if (!hasLiveGrip)
+                html.Append("<p style='font-size:12px;margin:4px 0 6px;'>")
+                    .Append("Reading your current grip. If needed, change classes and back.</p>");
+            if (!_editingName && originalProtected && hasLiveGrip)
+                MenuButton(html, "wa-save", "Save Current Grip...");
             if (_editingName)
             {
                 html.Append("<div style='width:331px;border-top:1px solid #90795c;")
@@ -386,31 +452,49 @@ public sealed class WeaponPresetUi : MonoBehaviour
                 MenuButton(html, "wa-key-cancel", "Cancel");
                 html.Append("</div>");
             }
-            html.Append("<h4 style='font-size:15px;margin:10px 0 6px 0;'>")
+            else
+            {
+            html.Append("<h4 style='font-size:15px;margin:9px 0 5px;'>")
                 .Append("Saved presets (").Append(active.Count).Append(")</h4>");
 
             if (active.Count == 0)
-                html.Append("<p style='font-size:12px;margin:5px 0 15px 0;'>")
-                    .Append("No presets for this class yet.</p>");
+                html.Append("<p style='font-size:12px;margin:5px 0 12px;'>")
+                    .Append("No presets for this class yet. Adjust your weapon first.</p>");
 
             for (int i = 0; i < Math.Min(40, active.Count); i++)
             {
                 GripPreset preset = active[i];
                 string suffix = i.ToString(CultureInfo.InvariantCulture);
-                html.Append("<div style='position:relative;width:332px;height:35px;")
-                    .Append("border-bottom:1px solid #8a7455;'>");
-                html.Append("<span style='position:absolute;top:7px;left:3px;")
-                    .Append("width:122px;overflow:hidden;white-space:nowrap;font-size:12px;")
-                    .Append(preset.Original ? "color:#447638;" : "color:#382a1c;")
-                    .Append("'>").Append(Escape(preset.Name)).Append("</span>");
-                RowButton(html, "wa-load-" + suffix, "Load", 131, 50);
-                RowButton(html, "wa-rename-" + suffix, "Rename", 187, 64);
-                RowButton(html, "wa-delete-" + suffix, "Delete", 257, 65, "#eed0aa");
-                html.Append("</div>");
+                bool isInUse = preset.Id == activeId;
+                bool sameGrip = matching.Contains(preset.Id) && !isInUse;
+                string marker = isInUse ? "IN USE" :
+                    sameGrip ? "MATCH" : preset.Original ? "BACKUP" : "";
+                string markerColor = isInUse ? "#287339" :
+                    sameGrip ? "#735d34" : "#806b4d";
+
+                // Two-line card: full-width name/status above three evenly
+                // spaced actions. Names and Load buttons never share a line.
+                html.Append("<div style='position:relative;width:328px;height:69px;")
+                    .Append("margin:1px 0;border-bottom:1px solid #927d60;'>")
+                    .Append("<span style='position:absolute;left:5px;top:5px;")
+                    .Append("width:237px;overflow:hidden;white-space:nowrap;")
+                    .Append("font-size:13px;color:")
+                    .Append(isInUse ? "#287339" : "#402d1c")
+                    .Append(";'>").Append(Escape(VisiblePresetName(preset))).Append("</span>")
+                    .Append("<span style='position:absolute;left:245px;top:5px;")
+                    .Append("width:76px;text-align:right;font-size:11px;color:")
+                    .Append(markerColor).Append(";'>")
+                    .Append(Escape(marker)).Append("</span>")
+                    .Append("<div style='position:absolute;left:0;top:29px;")
+                    .Append("width:325px;height:36px;'>");
+                RowButton(html, "wa-load-" + suffix, "Load", 5, 99);
+                RowButton(html, "wa-rename-" + suffix, "Rename", 114, 99);
+                RowButton(html, "wa-delete-" + suffix, "Delete", 223, 99, "#eed0aa");
+                html.Append("</div></div>");
                 if (_deleteId == preset.Id)
                 {
                     html.Append("<p style='margin:8px 0 3px 0;font-size:12px;'>")
-                        .Append("Delete '").Append(Escape(preset.Name))
+                        .Append("Delete '").Append(Escape(VisiblePresetName(preset)))
                         .Append("' from ").Append(Escape(current.ClassName))
                         .Append("? It can be restored from Trash.</p>")
                         .Append("<div style='position:relative;width:330px;height:38px;'>");
@@ -421,9 +505,11 @@ public sealed class WeaponPresetUi : MonoBehaviour
             }
             if (active.Count > 40)
                 html.Append("<p style='font-size:12px;'>First 40 presets shown.</p>");
-            html.Append("<div style='height:8px;'></div>");
-            MenuButton(html, "wa-undo", "Restore Previous Grip");
-            MenuButton(html, "wa-trash-toggle", _showTrash ? "Hide Trash" : "View Trash");
+            html.Append("<div style='height:7px;'></div>")
+                .Append("<div style='position:relative;width:327px;height:39px;'>");
+            RowButton(html, "wa-undo", "Undo Last Load", 3, 155);
+            RowButton(html, "wa-trash-toggle", _showTrash ? "Hide Trash" : "View Trash", 169, 155);
+            html.Append("</div>");
             if (_showTrash)
             {
                 html.Append("<h4 style='font-size:14px;margin:7px 0 2px;'>Trash</h4>");
@@ -440,19 +526,21 @@ public sealed class WeaponPresetUi : MonoBehaviour
                     html.Append("</div>");
                 }
             }
+            } // end preset list (hidden while naming)
         }
 
-        if (string.IsNullOrEmpty(PresetStore.Error))
-            MenuButton(html, "wa-backup", "Back Up / Export Presets");
-        else
+        if (!string.IsNullOrEmpty(PresetStore.Error))
             html.Append("<p style='font-size:12px;color:#a33;'>")
                 .Append(Escape(PresetStore.Error)).Append("</p>");
+        else if (!_editingName)
+            MenuButton(html, "wa-backup", "Back Up All Presets");
         if (!string.IsNullOrEmpty(_message))
-            html.Append("<p style='font-size:12px;margin:7px 0;color:#3c3022;'>")
-                .Append(Escape(_message)).Append("</p>");
-        html.Append("<p style='font-size:11px;color:#705943;margin-top:7px;'>")
-            .Append("Presets are separated by class and controller. ")
-            .Append("Deleted presets remain recoverable.</p>");
+            html.Append("<p style='font-size:13px;margin:7px 0 6px;color:")
+                .Append(_messageSuccess ? "#257338" : "#4a3525")
+                .Append(";'>").Append(Escape(_message)).Append("</p>");
+        html.Append("<p style='font-size:11px;color:#705943;margin-top:6px;'>")
+            .Append("Saves both rotation and position. Each class has its own presets; ")
+            .Append("deleted presets can be restored.</p>");
 
         if (!SetHtml(_root, html.ToString())) return;
         _lastFingerprint = fingerprint;
@@ -461,7 +549,7 @@ public sealed class WeaponPresetUi : MonoBehaviour
             Bind("wa-backup", () => Apply(() => PresetStore.BackupAll().message));
         if (!identified || !string.IsNullOrEmpty(PresetStore.Error)) return;
 
-        BindEvent("wa-adjust", evt => Apply(() => ToggleNativeAdjustment(evt)));
+        Bind("wa-adjust", () => Apply(ToggleNativeAdjustment));
         Bind("wa-save", () => AskForName("", scope, null));
         if (_editingName)
         {
@@ -492,7 +580,7 @@ public sealed class WeaponPresetUi : MonoBehaviour
         {
             GripPreset preset = active[i];
             string key = i.ToString(CultureInfo.InvariantCulture);
-            Bind("wa-load-" + key, () => Apply(() => GripEngine.Load(preset.Id)));
+            Bind("wa-load-" + key, () => LoadPreset(preset.Id));
             Bind("wa-rename-" + key, () => AskForName(preset.Name, scope, preset.Id));
             Bind("wa-delete-" + key, () =>
             {
