@@ -4,7 +4,7 @@ using BepInEx.Unity.IL2CPP;
 
 namespace OrbusWeaponAdjustments;
 
-[BepInPlugin("com.horizon.orbus.weaponadjustments", "OrbusWeaponAdjustments", "0.2.1")]
+[BepInPlugin("com.horizon.orbus.weaponadjustments", "OrbusWeaponAdjustments", "0.2.2")]
 public sealed class Plugin : BasePlugin
 {
     internal static BepInEx.Logging.ManualLogSource ModLog = null!;
@@ -41,7 +41,7 @@ public sealed class Plugin : BasePlugin
         AddComponent<AdjustmentDiagnostics>();
         AddComponent<LiveAdjustmentCapture>();
 
-        Log.LogInfo("[WeaponAdjustments v0.2.0] Native preset prototype loaded; legacy diagnostics preserved.");
+        Log.LogInfo("[WeaponAdjustments v0.2.2] Preset manager moved to RebornMenu Mods; legacy diagnostics preserved.");
         Log.LogInfo("[WeaponAdjustments/Presets] Durable storage: " + PresetStore.Location);
         if (!string.IsNullOrEmpty(PresetStore.Error))
             Log.LogWarning("[WeaponAdjustments/Presets] " + PresetStore.Error);
@@ -49,7 +49,7 @@ public sealed class Plugin : BasePlugin
         Log.LogInfo("[WeaponAdjustments] Ctrl+Alt+R = arm/stop LIVE capture; Ctrl+Alt+M = timestamp marker.");
         Log.LogInfo("[WeaponAdjustments] Ctrl+Alt+P = trace native adjustment and local preference write API calls.");
         Log.LogInfo("[WeaponAdjustments] Only SubmitAdjust-scoped numeric writes are captured; preference key names are never saved.");
-        Log.LogInfo("[WeaponAdjustments] Native Settings adds class-scoped Save/Load/Trash/Restore controls.");
+        Log.LogInfo("[WeaponAdjustments] RebornMenu Mods tab displays class-scoped Save/Load/Rename/Delete/Trash/Restore controls.");
         Log.LogInfo("[WeaponAdjustments] Load only runs after exact live key verification and a durable rollback backup.");
     }
 }

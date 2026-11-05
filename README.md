@@ -1,6 +1,6 @@
 # OrbusWeaponAdjustments
 
-Standalone BepInEx IL2CPP plugin for OrbusVR. **v0.2.1 fixes character-scoped detection in the first Weapon Presets test release**: class-scoped names, Save New, Load, Rename, confirmed Trash deletion, Restore, and automatic original-grip import. All older diagnostic shortcuts are preserved.
+Standalone BepInEx IL2CPP plugin for OrbusVR. **v0.2.2 moves the preset manager into WeaponAdjustments' own RebornMenu Mods page.** Vanilla General Settings is left untouched. Save and Rename use Orbus's native VR keyboard, and a compact class-specific list shows Load / Rename / Delete beside each named preset. Automatic originals, backups, Trash and the legacy diagnostics are preserved.
 
 **First-test warning:** Source is not yet compiled/tested against the user's Renewed/Spades instance. It fails closed when the class, exact live PlayerPrefs keys, or vanilla rig refresh method cannot be verified. Open Settings → Adjust Weapon Grip to find the native preset section. A preset cannot load until its class's six reader keys and enable flag are known, so a class may show "pending" on its first visit. Don't use Reset on a valuable grip until the initial Original backup appears.
 
@@ -173,3 +173,33 @@ exactly which context stage is missing, without printing any player IDs, and
 vanilla grip until the class-specific **Original Grip (Imported)** appears.
 This is still the first unverified live preset implementation; please share the
 new contextual status and log if the controls remain unavailable.
+
+## v0.2.2 — dedicated RebornMenu mod page
+
+Install BOTH RebornMenu v0.2.11+ and WeaponAdjustments v0.2.2+ through RM.
+Open Settings > Mods > OrbusWeaponAdjustments, NOT General > Adjust Weapon Grip.
+All original General Settings buttons are left untouched.
+
+RebornMenu discovers an optional provider through reflection and gives this
+mod its own 350px-wide right-side page, without depending on a shared DLL.
+Other mods continue using their generic BepInEx Config.Bind settings UI.
+
+- The active class/controller is displayed. Only that class's presets appear.
+- Save Current Grip opens the actual Orbus VR keyboard for a custom name.
+- Each preset row has three buttons: Load, Rename and Delete.
+- Rename opens the native keyboard, initially filled with the saved name.
+- Delete first requires Cancel or Confirm Delete and moves to Trash.
+- Footer actions support Restore Previous Grip, View Trash and Backup/Export.
+- The native keyboard mapping is PlayerCharacter.myKeyboard -> ceh.beue
+  and OrbusKeyboard.ShowKeyboard(Action<string>) -> lu.efy(Action<string>).
+- The keyboard callback is converted with the same IL2CPP DelegateSupport
+  technique as RebornMenu's already working PowerUI event callbacks.
+
+**This keyboard bridge requires its first live VR test.** If unavailable,
+no Save/Rename mutation occurs; the error is shown in the page.
+
+Preset storage paths and data formats DID NOT CHANGE. Previously imported
+originals, named presets, Trash, Backups and exports remain at:
+%LOCALAPPDATA%\OrbusWeaponAdjustments\Presets\v1
+
+Focused test instructions: docs/PRESETS_V022_MODS_PAGE_TEST.md
