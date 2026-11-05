@@ -126,20 +126,67 @@ try {
         & git push origin main
         CheckExit 'Pushing mod sources to GitHub'
 
-        # An unpublished first version is NORMAL. Do not call "gh release view"
-        # until we know it exists: in Windows PowerShell, "release not found"
-        # on stderr can become a terminating NativeCommandError under Stop.
+        # Publishing is idempotent: a failed GitHub API call may nevertheless
+        # have created a release or a draft. Always check before another
+        # create attempt, and leave existing assets untouched.
         $publishedTags = @(& gh release list --repo $repo --limit 100 --json tagName --jq '.[].tagName')
         CheckExit 'Checking existing GitHub release tags'
         $releaseExists = $publishedTags -contains $tag
         if (-not $releaseExists) {
-            Write-Host "Creating stable GitHub release $tag with DLL..." -ForegroundColor Cyan
             $notes = 'First native PowerUI Weapon Presets test: named per-class/controller/character presets, protected first-run grip backups, durable storage outside RM instances, confirmation before Trash deletion, Rename, Restore, manual backup export and safe Load/Undo through verified native grip keys. Legacy diagnostics remain available. THIS IS THE FIRST UNVERIFIED LIVE TEST BUILD; use Backup All Presets and verify your existing grip before loading.'
             $commit = (& git rev-parse HEAD).Trim()
             CheckExit 'Reading source commit'
-            # Use the same one-step release publication as RebornCamera.
-            & gh release create $tag $dll --repo $repo --target $commit --title "OrbusWeaponAdjustments $tag - Native Presets Test" --notes $notes
-            CheckExit 'Publishing stable release and preset DLL'
+            $maxAttempts = 4
+            for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+                # A previous HTTP 500 can occur AFTER GitHub created the
+                # release. Detect that before making another POST.
+                $tagsNow = @()
+                $listOkay = $false
+                try {
+                    $tagsNow = @(& gh release list --repo $repo --limit 100 --json tagName --jq '.[].tagName')
+                    $listOkay = ($LASTEXITCODE -eq 0)
+                }
+                catch {
+                    Write-Host "Release listing failed on attempt $attempt." -ForegroundColor Yellow
+                }
+                if ($listOkay -and ($tagsNow -contains $tag)) {
+                    $releaseExists = $true
+                    Write-Host "GitHub has already created release $tag; resuming asset verification." -ForegroundColor Yellow
+                    break
+                }
+                if ($listOkay) {
+                    Write-Host "Publishing $tag (attempt $attempt/$maxAttempts)..." -ForegroundColor Cyan
+                    try {
+                        & gh release create $tag $dll --repo $repo --target $commit --title "OrbusWeaponAdjustments $tag - Native Presets Test" --notes $notes
+                        if ($LASTEXITCODE -eq 0) {
+                            $releaseExists = $true
+                            break
+                        }
+                    }
+                    catch {
+                        Write-Host ("Release attempt failed: " + $_.Exception.Message) -ForegroundColor Yellow
+                    }
+                }
+                if ($attempt -lt $maxAttempts) {
+                    $pause = [int][math]::Pow(2, $attempt)
+                    Write-Host "GitHub release API failed; retrying after $pause seconds..." -ForegroundColor Yellow
+                    Start-Sleep -Seconds $pause
+                }
+            }
+            if (-not $releaseExists) {
+                # Last check for a late server-side success.
+                $lastTags = @()
+                try {
+                    $lastTags = @(& gh release list --repo $repo --limit 100 --json tagName --jq '.[].tagName')
+                    if ($LASTEXITCODE -eq 0 -and ($lastTags -contains $tag)) {
+                        $releaseExists = $true
+                    }
+                }
+                catch { }
+            }
+            if (-not $releaseExists) {
+                throw "GitHub release API did not publish $tag after $maxAttempts attempts. Source and DLL build are safe; retry .\release.ps1 when GitHub is available."
+            }
         }
         else {
             Write-Host "GitHub release $tag already exists; verifying its DLL..." -ForegroundColor Yellow
