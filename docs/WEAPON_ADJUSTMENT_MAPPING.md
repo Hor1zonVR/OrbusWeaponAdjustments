@@ -173,3 +173,99 @@ remain held only transiently in RAM for per-trace anonymous K-slot
 comparisons and are never written. The next controlled test compares
 one translation and one rotation of the **same Bard** weapon to determine
 which K-slots represent which motion. No settings are written by the mod.
+
+
+## 2026-11-05 Ghidra breakthrough: save AND read routines identified
+
+**This section supersedes the earlier unknown-axis/unknown-local-persistence
+notes above.** The original readable *Community Edition* native
+`GameAssembly.dll` was inspected at RVA `0x4A9DA0`
+(`MagicalActual.WeaponAdjuster.SubmitAdjust`, VA `0x1804A9DA0`).
+The method directly calls `UnityEngine.PlayerPrefs.SetInt` once
+(adjustment flag = 1) then `UnityEngine.PlayerPrefs.SetFloat` six times.
+The Bard runtime logs independently observed exactly this 1+6 pattern on
+Renewed/Spades `cmi.mnh`, twice.
+
+The six Community `SetFloat` keys are built with
+`string.Concat(string[6])`, each using the same five preceding runtime
+components and a distinct last global string reference:
+
+| Order | Meaning | Last suffix string pointer in Community Ghidra |
+| --- | --- | --- |
+| 1 | rotation X | `DAT_181d26a00` |
+| 2 | rotation Y | `DAT_181d26a08` |
+| 3 | rotation Z | `DAT_181d26a38` |
+| 4 | position X | `DAT_181d26a60` |
+| 5 | position Y | `DAT_181d26a80` |
+| 6 | position Z | `DAT_181d26aa8` |
+
+**Crucial cross-check:** two native Community read functions use
+`PlayerPrefs.GetFloat(string)` with those exact suffix references,
+in the same axis order. This establishes actual save/read pairing:
+
+- `FUN_180472750` = `RigBasedAdjustment.getPlayerAdjustRotation()`,
+  returns a `Vector3` made from suffixes `26a00/26a08/26a38`.
+- `FUN_180471F20` = `RigBasedAdjustment.getPlayerAdjustPosition()`,
+  returns a `Vector3` made from suffixes `26a60/26a80/26aa8`.
+
+The shown suffix symbols are **Community addresses of string references,
+not the literal key suffix text**, and must NOT be hardcoded as key strings
+or used as native addresses on Renewed/Spades.
+
+`PlayerAvatar.MakeRigBasedAdjustments()` (Community
+`FUN_18033EAA0`) enumerates `RigBasedAdjustment` descendants, invokes
+`RigBasedAdjustment.Reset()` (`FUN_180471E00`) under appropriate
+conditions, then uses `getPositionAdjustment(PlayerAvatar)`
+(`FUN_180472F80`) and `getRotationAdjustment(PlayerAvatar)`
+(`FUN_1804732E0`) to apply resulting local transforms. These call into
+the player-preference readers. Thus **a plausible immediate reapply
+sequence** is `PlayerPrefs.SetFloat` for all six fields followed by the
+vanilla `PlayerAvatar.MakeRigBasedAdjustments()`. It remains necessary
+to verify safe current-class/client behaviour in Renewed; never bypass
+the vanilla reset/apply flow by directly accumulating transforms.
+
+### Community to Renewed/Spades structural class map
+
+Readable `MagicalActual.RigBasedAdjustment` = obfuscated `cgr` (same
+ten fields in the same order/offsets, six `Vector3` adjustment fields,
+`Quaternion` at 0x30, final `bool` at 0x88, identical eight methods).
+
+| Community | Renewed/Spades metadata |
+| --- | --- |
+| `RigBasedAdjustment` | `cgr` |
+| `rotationAdjustmentTouch` | `cgr.bfsl` |
+| `positionAdjustmentTouch` | `cgr.bfsm` |
+| `finalQuaternionTouch` | `cgr.bfsn` |
+| `rotationAdjustmentSteam` | `cgr.bfso` |
+| `positionAdjustmentSteam` | `cgr.bfsp` |
+| `rotationAdjustmentIndex` | `cgr.bfsq` |
+| `positionAdjustmentIndex` | `cgr.bfsr` |
+| `Reset()` | `cgr.Reset()` |
+| `getPositionAdjustment(cbn)` | `cgr.lvm(cbn)` |
+| `getRotationAdjustment(cbn)` | `cgr.lvn(cbn)` |
+| `getPlayerAdjustRotation()` | `cgr.lvo()` |
+| `getPlayerAdjustPosition()` | `cgr.lvp()` |
+
+The class and method signatures match in metadata; the newer functions'
+internal logic and exact key format still need verifying against its binary
+or a bounded live preset test.
+
+### Recommended implementation milestone (replaces diagnostics-only loop)
+
+Implement a local, versioned preset store containing per-class/per-controller
+six-float snapshots plus the enabled flag, with keys captured from the
+real vanilla adjustment save call (and kept local). Saving a preset must not
+alter game PlayerPrefs. Loading should:
+
+1. Require a validated active character/class/controller and a complete
+   matching key set. Block cross-character/class/controller misapplication.
+2. Backup current six `PlayerPrefs.GetFloat` values and enabled state,
+   validate the selected preset and then atomically write the six
+   `PlayerPrefs.SetFloat` values plus enabled flag, with rollback on error.
+3. Trigger the **mapped vanilla rig refresh** rather than directly
+   reparenting or overriding weapon transforms.
+4. Offer a one-click rollback if the first load doesn't visibly take effect.
+
+Expose Save / Load / Restore Previous Grip through native Settings,
+directly below Adjust Weapon Grip buttons. Keep legacy diagnostics
+available until loading is proven in both Community and Renewed/Spades.
