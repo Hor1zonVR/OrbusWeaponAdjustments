@@ -207,10 +207,28 @@ try {
             CheckExit 'Uploading release DLL'
         }
 
-        $checkJson = & gh release view $tag --repo $repo --json isPrerelease,assets,url
+        # GitHub can create a draft and attach the DLL before returning 500.
+        # RM only sees published stable releases; finalize orphaned drafts.
+        $draftJson = & gh release view $tag --repo $repo --json isDraft
+        CheckExit 'Checking GitHub release draft status'
+        $draftStatus = $draftJson | ConvertFrom-Json
+        if ($draftStatus.isDraft) {
+            Write-Host "Publishing recovered draft $tag for RebornManager..." -ForegroundColor Yellow
+            & gh release edit $tag --repo $repo --draft=false --prerelease=false
+            if ($LASTEXITCODE -ne 0) {
+                $verifyDraftJson = & gh release view $tag --repo $repo --json isDraft
+                CheckExit 'Verifying publish after GitHub error'
+                $verifyDraft = $verifyDraftJson | ConvertFrom-Json
+                if ($verifyDraft.isDraft) {
+                    throw "Release $tag remains a draft. Run gh release edit $tag --repo $repo --draft=false --prerelease=false."
+                }
+            }
+        }
+
+        $checkJson = & gh release view $tag --repo $repo --json isDraft,isPrerelease,assets,url
         CheckExit 'Verifying published release'
         $check = $checkJson | ConvertFrom-Json
-        if ($check.isPrerelease -or
+        if ($check.isDraft -or $check.isPrerelease -or
             @($check.assets | Where-Object { $_.name -eq 'OrbusWeaponAdjustments.dll' -and $_.size -gt 0 }).Count -ne 1) {
             throw 'Release verification failed: expected one nonempty DLL on a stable release.'
         }
