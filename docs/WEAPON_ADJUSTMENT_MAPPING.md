@@ -151,3 +151,25 @@ network storage remain possible.
 **Preservation rule:** keep the old `AdjustmentDiagnostics` and
 `LiveAdjustmentCapture` components while the targeted native methods
 and storage candidates are being validated.
+
+## v0.1.6 confirmed Bard test and v0.1.7 next step
+
+The Bard `WeaponMechanics_20261105_133920_335.txt` report showed two
+independent `cmi.mnh` submissions, each containing **exactly one**
+`Unity.PlayerPrefs.SetInt` call followed by **six** `SetFloat` calls, all
+between the method prefix/postfix within approximately 8 ms. The pattern
+was identical across both adjustments. The temporary `cmi` adjustment
+object was destroyed before +0.5 s. Zero `PlayerPrefs.Save` calls
+were recorded (this does NOT prove no eventual save).
+
+This provides strong direct evidence that the vanilla adjustment handler
+writes numeric settings through Unity PlayerPrefs. The exact six values,
+raw preference keys, axes, units, and reset behaviour remain unverified.
+
+v0.1.7 adds an isolated, submit-scoped argument trace to the existing
+preference-method hooks. Only `SetFloat` values and small `SetInt`
+values during actual `SubmitAdjust` are logged. Raw preference keys
+remain held only transiently in RAM for per-trace anonymous K-slot
+comparisons and are never written. The next controlled test compares
+one translation and one rotation of the **same Bard** weapon to determine
+which K-slots represent which motion. No settings are written by the mod.

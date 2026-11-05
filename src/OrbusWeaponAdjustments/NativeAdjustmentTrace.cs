@@ -202,7 +202,7 @@ internal static class NativeAdjustmentTrace
         _dropped = 0;
         _start = DateTime.Now;
         _armed = true;
-        Log("ARMED v0.1.6: native adjustment and local persistence API observations; read-only");
+        Log("ARMED v0.1.7: native adjustment and submit-scoped numeric preference writes; read-only");
         PersistenceProbe.OnStart();
         Plugin.ModLog.LogInfo("[WeaponAdjustments/Methods] Trace ARMED. Press Ctrl+Alt+P to save.");
     }
@@ -220,11 +220,12 @@ internal static class NativeAdjustmentTrace
             string file = Path.Combine(folder, "WeaponMechanics_" +
                 _start.ToString("yyyyMMdd_HHmmss_fff", CultureInfo.InvariantCulture) + ".txt");
             var sb = new StringBuilder(32768);
-            sb.AppendLine("ORBUS WEAPON ADJUSTMENTS: NATIVE METHOD TRACE v0.1.6");
+            sb.AppendLine("ORBUS WEAPON ADJUSTMENTS: NATIVE METHOD TRACE v0.1.7");
             sb.AppendLine("Read-only; method invocation confirms control flow, not persistent save semantics.");
             sb.AppendLine("Derived from Community WeaponAdjuster and renewed cmi class mapping.");
             sb.AppendLine("Local preference API calls are indicators only; they cannot prove where grip data is saved.");
-            sb.AppendLine("No preference keys or values are captured. No events does NOT prove server storage.");
+            sb.AppendLine("Only floats/limited ints passed to PlayerPrefs during SubmitAdjust may be captured.");
+            sb.AppendLine("Preference key names are NEVER saved; anonymous K# slots apply only within this trace.");
             sb.AppendLine("Review GameObject names/paths before sharing. No UI input text collected.");
             sb.AppendLine("eventCount=" + Records.Count + " dropped=" + _dropped);
             foreach (string line in Records) sb.AppendLine(line);
@@ -316,9 +317,14 @@ internal static class NativeAdjustmentTrace
     private static void MenuToggleAfter() => Record("MENU.ToggleAdjustWeapon AFTER");
     private static void MenuResetBefore() => Record("MENU.ResetAdjustWeapon BEFORE");
     private static void MenuResetAfter() => Record("MENU.ResetAdjustWeapon AFTER");
-    private static void SubmitBefore(object __instance) => Record("ADJUST.SubmitAdjust BEFORE", __instance);
+    private static void SubmitBefore(object __instance)
+    {
+        Record("ADJUST.SubmitAdjust BEFORE", __instance);
+        PersistenceProbe.BeginSubmission();
+    }
     private static void SubmitAfter(object __instance)
     {
+        PersistenceProbe.EndSubmission();
         Record("ADJUST.SubmitAdjust AFTER", __instance);
         PersistenceProbe.MarkSubmitted(__instance);
     }

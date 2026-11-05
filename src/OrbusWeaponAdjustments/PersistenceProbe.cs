@@ -11,9 +11,10 @@ namespace OrbusWeaponAdjustments;
 
 /// <summary>
 /// Optional observation of local preference API writes while the native
-/// adjustment trace is explicitly armed. NO keys, values, file paths,
-/// request payloads or client settings are read, saved or changed.
-/// A null result does not rule out server/custom storage.
+/// adjustment trace is explicitly armed. Captures only submit-scoped
+/// numeric write arguments and in-memory anonymous key identity. Raw keys,
+/// file paths, request payloads and other settings are never logged.
+/// No callbacks edit client or server state.
 /// </summary>
 internal static class PersistenceProbe
 {
@@ -25,6 +26,13 @@ internal static class PersistenceProbe
     private static float _nextSample;
     private static int _sampleIndex;
     private static readonly float[] SampleIntervals = { 0.5f, 1.5f, 4.0f };
+    private static readonly Dictionary<string, int> AnonymousKeySlots =
+        new(StringComparer.Ordinal);
+    private static bool _withinSubmit;
+    private static float _submitDeadline;
+    private static int _writesInSubmit;
+    private const int MaxWriteDetailsPerSubmit = 16;
+    private const int MaxKeySlotsPerTrace = 32;
 
     private static Type? FindType(string name)
     {
@@ -89,7 +97,16 @@ internal static class PersistenceProbe
                 MethodInfo? callback = typeof(PersistenceProbe).GetMethod(
                     prefix + methodName, BindingFlags.NonPublic | BindingFlags.Static);
                 if (callback == null) continue;
-                _harmony!.Patch(method, postfix: new HarmonyMethod(callback));
+                // Existing method-call postfix is preserved. Numeric details
+                // are captured ONLY during the verified SubmitAdjust frame.
+                MethodInfo? details = null;
+                if (methodName == "SetFloat" || methodName == "SetInt")
+                    details = typeof(PersistenceProbe).GetMethod(
+                        prefix + methodName + "Details",
+                        BindingFlags.NonPublic | BindingFlags.Static);
+                _harmony!.Patch(method,
+                    prefix: details == null ? null : new HarmonyMethod(details),
+                    postfix: new HarmonyMethod(callback));
                 _hookCount++;
             }
             catch (Exception ex)
@@ -100,8 +117,70 @@ internal static class PersistenceProbe
         }
     }
 
-    // Harmony post-fixes intentionally accept no parameters. This prevents
-    // recording keys, game preferences, account data, or saved values.
+    // General Harmony postfixes intentionally capture only the method name.
+    // Separate guarded prefixes handle numeric arguments during SubmitAdjust.
+    // The raw key remains in memory only to assign a per-trace alias.
+    private static void UnitySetFloatDetails(string __0, float __1) =>
+        RecordNumeric("Unity.PlayerPrefs", __0, __1, null);
+    private static void UnitySetIntDetails(string __0, int __1) =>
+        RecordNumeric("Unity.PlayerPrefs", __0, null, __1);
+    private static void ObscuredSetFloatDetails(string __0, float __1) =>
+        RecordNumeric("ObscuredPrefs", __0, __1, null);
+    private static void ObscuredSetIntDetails(string __0, int __1) =>
+        RecordNumeric("ObscuredPrefs", __0, null, __1);
+
+    private static void RecordNumeric(string api, string key, float? floatValue, int? intValue)
+    {
+        try
+        {
+            if (!NativeAdjustmentTrace.IsArmed || !_withinSubmit) return;
+            if (Time.realtimeSinceStartup > _submitDeadline)
+            {
+                _withinSubmit = false;
+                NativeAdjustmentTrace.LogStorage(
+                    "SUBMIT_WRITE observation window expired; no further numeric captures");
+                return;
+            }
+            if (_writesInSubmit >= MaxWriteDetailsPerSubmit) return;
+            int slot;
+            if (!AnonymousKeySlots.TryGetValue(key, out slot))
+            {
+                if (AnonymousKeySlots.Count >= MaxKeySlotsPerTrace) return;
+                slot = AnonymousKeySlots.Count + 1;
+                AnonymousKeySlots[key] = slot;
+            }
+            int index = ++_writesInSubmit;
+            string type = floatValue.HasValue ? "float" : "int";
+            // Float values are only included in this explicitly armed,
+            // submit-scoped opt-in capture, never during unrelated writes.
+            string value = floatValue.HasValue ?
+                floatValue.Value.ToString("R", CultureInfo.InvariantCulture) :
+                intValue is >= -16 and <= 255 ?
+                    intValue.Value.ToString(CultureInfo.InvariantCulture) :
+                    "(integer outside  -16..255 redacted)";
+            NativeAdjustmentTrace.LogStorage("SUBMIT_WRITE #" + index +
+                " api=" + api + " slot=K" + slot + " type=" + type +
+                " value=" + value + " (raw key withheld)");
+        }
+        catch { /* Instrumentation must never affect vanilla PlayerPrefs. */ }
+    }
+
+    internal static void BeginSubmission()
+    {
+        if (!NativeAdjustmentTrace.IsArmed || !Plugin.ObserveLocalPreferenceWrites.Value) return;
+        _withinSubmit = true;
+        _writesInSubmit = 0;
+        _submitDeadline = Time.realtimeSinceStartup + 0.5f;
+        NativeAdjustmentTrace.LogStorage("SUBMIT_WRITE capture began (500ms safety limit)");
+    }
+
+    internal static void EndSubmission()
+    {
+        if (!_withinSubmit) return;
+        NativeAdjustmentTrace.LogStorage("SUBMIT_WRITE capture ended; count=" + _writesInSubmit);
+        _withinSubmit = false;
+    }
+
     private static void UnitySetString() => Record("Unity.PlayerPrefs.SetString");
     private static void UnitySetFloat() => Record("Unity.PlayerPrefs.SetFloat");
     private static void UnitySetInt() => Record("Unity.PlayerPrefs.SetInt");
@@ -124,6 +203,9 @@ internal static class PersistenceProbe
     {
         _lastSubmitted = null;
         _sampleIndex = 0;
+        _withinSubmit = false;
+        _writesInSubmit = 0;
+        AnonymousKeySlots.Clear();
         NativeAdjustmentTrace.LogStorage("STORAGE PROBE hookCount=" + _hookCount +
             " (does not monitor server or arbitrary disk/network operations)");
     }
@@ -132,6 +214,9 @@ internal static class PersistenceProbe
     {
         _lastSubmitted = null;
         _sampleIndex = 0;
+        _withinSubmit = false;
+        _writesInSubmit = 0;
+        AnonymousKeySlots.Clear();
     }
 
     internal static void MarkSubmitted(object instance)
