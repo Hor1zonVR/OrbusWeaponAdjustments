@@ -367,3 +367,84 @@ Before declaring presets ready, test the following on Renewed/Spades:
    or backups.
 7. Load a preset, validate the actual visible grip change, then
    Restore Previous Grip and verify the undo. Repeat after a class switch.
+
+## First-run automatic original-grip imports (agreed 2026-11-05)
+
+**Acceptance requirement:** on the first launch of the preset-capable
+mod, preserve every existing *vanilla weapon adjustment* as a separate
+class-specific preset **before** allowing the user to experiment with
+new grips. This initial import is a snapshot/backup operation only. It
+must never modify the game's existing PlayerPrefs or equipped weapon.
+
+### Intended experience
+
+- When the preset feature first runs, look for previously saved vanilla
+  weapon adjustments for **all supported classes**, not merely the class
+  currently equipped. Use the game's real class identifiers, resolved
+  character identity, controller-specific key format and the proven
+  enabled-flag + six-float save/read mapping.
+- For each class/controller/character combination with a **complete,
+  verified existing adjustment**, create a named preset such as
+  **"Original Grip (Imported)"** in that class's collection. Store the
+  actual six saved numeric values and enabled flag, provenance
+  (auto-import), timestamp and an immutable ID. A user can rename or
+  duplicate this preset without losing its separate protected backup.
+- Do **not** invent a preset for a class with no existing adjustment,
+  confuse an unset default with an intentional user adjustment, or
+  import one class's values into another's scope. Check the enabled
+  flag and all six keys using the precise, client-verified native key
+  scheme (e.g. `PlayerPrefs.HasKey`) before importing. No broad search
+  of unrelated preferences or hardcoded Ghidra virtual addresses.
+- Make auto-import **idempotent**. Per-scope import markers, backed by
+  durable record IDs, prevent duplicate imports after restarting or
+  updating. Never overwrite an existing imported preset or a user's
+  named preset with a later game's current grip.
+- **Do not mark the entire import as complete merely because startup
+  ran.** Loading character state or controller identity may be delayed;
+  retry unread scopes when prerequisites become available. Record
+  progress per character/class/controller scope. If all saved class
+  keys can be constructed safely, import all classes on that first
+  eligible session without forcing class changes.
+- If a particular class's keys cannot safely be resolved without
+  equipping that class, fall back to an **automatic first-equip import**
+  of that class. Preserve the original before enabling Save New/Load
+  for that class and display an honest unobtrusive status
+  ("Original adjustment backed up" / "Pending first equip"), rather
+  than claiming every class was imported.
+- Save the first captured original into its own durable file with an
+  atomic write, and create an additional immutable backup copy outside
+  the RM-managed DLL/update folder. If the backup write/validation
+  fails, keep the vanilla preferences untouched, report a clear
+  failure and block destructive preset operations for that scope.
+- Keep original snapshots and backups across mod upgrades, reinstall,
+  migration and class switching. Never treat a schema-version change
+  as a reason to re-import over, clear, or replace older snapshots.
+  Unknown schema/data remains read-only and recoverable.
+- The imported original can be loaded through the same verified vanilla
+  apply path as any named preset. Give it clear "Original" labeling;
+  require the existing two-step delete confirmation and move to Trash
+  instead of permanently deleting. Retain its separate recovery copy
+  even if a user chooses to delete the visible imported preset.
+- Never log raw per-character preference keys, personal identifiers,
+  or values during normal import. A future optional manual "Import
+  current vanilla grip" action may be useful, but must not silently
+  replace the first-run original.
+
+### First-run acceptance tests
+
+1. With pre-existing Bard, Runemage and Paladin adjustments, install
+   the mod while Bard is equipped; all three originals must be imported
+   without the user switching classes **if** verified key construction
+   permits it.
+2. Restart and update through RebornManager: each original exists once,
+   and no current game adjustment is overwritten.
+3. Test a class with no saved adjustment: no fake original preset is
+   created.
+4. Test delayed character/controller initialization and classes only
+   discoverable on first equip: import eventually completes with a
+   clear pending state, without duplication.
+5. After manually adjusting Bard again, the imported "Original" remains
+   unchanged and can restore the previous Bard grip.
+6. Simulate a corrupt/failed import write: preserve vanilla settings
+   and existing backups, and retry safely without marking the
+   operation complete.
