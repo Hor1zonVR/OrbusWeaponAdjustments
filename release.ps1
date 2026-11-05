@@ -125,20 +125,23 @@ try {
         & git push origin main
         CheckExit 'Pushing mod sources to GitHub'
 
-        $existingJson = & gh release view $tag --repo $repo --json isPrerelease,assets,url 2>$null
-        $releaseExists = $LASTEXITCODE -eq 0
+        # An unpublished first version is NORMAL. Do not call "gh release view"
+        # until we know it exists: in Windows PowerShell, "release not found"
+        # on stderr can become a terminating NativeCommandError under Stop.
+        $publishedTags = @(& gh release list --repo $repo --limit 100 --json tagName --jq '.[].tagName')
+        CheckExit 'Checking existing GitHub release tags'
+        $releaseExists = $publishedTags -contains $tag
         if (-not $releaseExists) {
-            Write-Host "Creating stable GitHub release $tag..." -ForegroundColor Cyan
+            Write-Host "Creating stable GitHub release $tag with DLL..." -ForegroundColor Cyan
             $notes = 'Diagnostic-only Orbus weapon-adjustment recorder. Ctrl+Alt+R for a live 90-second session, Ctrl+Alt+J/K/U for manual snapshots. Observes XR trigger/button edges and likely wand/menu transforms. No weapon values or UI are changed.'
-            # Publish a release first, then upload the DLL in a separate operation.
-            & gh release create $tag --repo $repo --target main --title "OrbusWeaponAdjustments $tag - Diagnostic Test" --notes $notes
-            if ($LASTEXITCODE -ne 0) {
-                # API errors can happen after partial creation. Inspect state before failing.
-                $existingJson = & gh release view $tag --repo $repo --json isPrerelease,assets,url 2>$null
-                if ($LASTEXITCODE -ne 0) {
-                    throw "GitHub could not create release $tag. Source code is pushed; the compiled DLL is safe locally. Check GitHub Status and retry."
-                }
-            }
+            $commit = (& git rev-parse HEAD).Trim()
+            CheckExit 'Reading source commit'
+            # Use the same one-step release publication as RebornCamera.
+            & gh release create $tag $dll --repo $repo --target $commit --title "OrbusWeaponAdjustments $tag - Diagnostic Test" --notes $notes
+            CheckExit 'Publishing stable release and diagnostic DLL'
+        }
+        else {
+            Write-Host "GitHub release $tag already exists; verifying its DLL..." -ForegroundColor Yellow
         }
 
         $stateJson = & gh release view $tag --repo $repo --json isPrerelease,assets,url
