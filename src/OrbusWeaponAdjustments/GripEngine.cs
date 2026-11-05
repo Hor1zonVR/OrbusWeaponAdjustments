@@ -50,6 +50,23 @@ internal static class GripEngine
     internal static bool Installed => _installed;
     internal static string Status { get; private set; } = "Waiting for supported Orbus client";
     internal static string LastMessage { get; private set; } = "";
+    internal static string ContextStatus { get; private set; } = "Waiting for local character";
+    private static string _lastContextLog = "";
+    private static bool ContextUnavailable(string reason)
+    {
+        ContextStatus = reason;
+        if (_lastContextLog != reason)
+        {
+            _lastContextLog = reason;
+            // Stage names only. Never log character names, player DB ids,
+            // or the game's per-character PlayerPrefs keys.
+            Plugin.ModLog.LogInfo("[WeaponAdjustments/Presets] Context pending: " + reason);
+        }
+        return false;
+    }
+
+    private static string CharacterId(object? avatar, bool renewed) =>
+        Member(avatar, renewed ? "beix" : "playerDbId") as string ?? "";
 
     private static Type? Find(string name)
     {
@@ -201,33 +218,56 @@ internal static class GripEngine
         }
     }
 
-    // Derive scope only from the game's actual local player and active class.
+    // Stable class-scoped identity. PlayerMenu.seu/currentPlayerName is
+    // the name for the currently inspected menu target, not necessarily
+    // the logged-in character in General Settings.
+    // Community PlayerAvatar.playerDbId maps by property/field sequence to
+    // Renewed cbn.beix (partyStatus string, playerDbId string, banditFlag,
+    // skinTonePercent, customAppearance, currency).
     internal static bool TryContext(out object? avatar, out GripSnapshot snapshot)
     {
         avatar = null;
         snapshot = new GripSnapshot();
+        if (!_installed || _avatarType == null)
+            return ContextUnavailable("Native grip bridge not ready");
         try
         {
-            bool renewed = _avatarType?.Name == "cbn";
+            bool renewed = _avatarType.Name == "cbn";
             Type? playerType = Find(renewed ? "ceh" : "MagicalActual.PlayerCharacter");
+            if (playerType == null) return ContextUnavailable("PlayerCharacter type unavailable");
             object? pc = Member(playerType, renewed ? "blfr" : "Instance");
-            if (pc == null && playerType != null)
+            if (pc == null)
                 pc = Method(playerType, renewed ? "led" : "get_Instance", 0)?.Invoke(null, null);
+            if (pc == null) return ContextUnavailable("Local player not initialized");
             avatar = Member(pc, renewed ? "betm" : "myPlayerAvatar");
+            if (avatar == null) return ContextUnavailable("Local player avatar not initialized");
             object? active = Member(avatar, renewed ? "becm" : "currentActiveClass");
+            if (active == null) return ContextUnavailable("No active class selected");
             string className = Member(active, renewed ? "bfav" : "className") as string ?? "";
-            string character = Member(_menuType, renewed ? "seu" : "currentPlayerName") as string ?? "";
+            if (string.IsNullOrWhiteSpace(className) || className.Length > 60)
+                return ContextUnavailable("Active class name unavailable");
+            string character = CharacterId(avatar, renewed);
+            if (string.IsNullOrWhiteSpace(character) || character.Length > 120)
+                return ContextUnavailable("Character ID not initialized");
             string controller = _getController?.Invoke(avatar, null) as string ?? "";
-            if (avatar == null || string.IsNullOrWhiteSpace(className) ||
-                string.IsNullOrWhiteSpace(character) || string.IsNullOrWhiteSpace(controller) ||
-                className.Length > 60 || character.Length > 120 || controller.Length > 60)
-                return false;
+            if (string.IsNullOrWhiteSpace(controller) || controller.Length > 60)
+                return ContextUnavailable("Controller type not initialized");
             snapshot.ClassName = className.Trim();
             snapshot.Controller = controller.Trim();
-            snapshot.Scope = PresetStore.HashScope(character, snapshot.ClassName, snapshot.Controller);
+            snapshot.Scope = PresetStore.HashScope(
+                character, snapshot.ClassName, snapshot.Controller);
+            ContextStatus = "Ready";
+            if (_lastContextLog != "Ready")
+            {
+                _lastContextLog = "Ready";
+                Plugin.ModLog.LogInfo("[WeaponAdjustments/Presets] Context ready: active class and stable character ID verified.");
+            }
             return true;
         }
-        catch { return false; }
+        catch (Exception ex)
+        {
+            return ContextUnavailable("Character lookup failed (" + ex.GetType().Name + ")");
+        }
     }
 
     private static void BeginRigReset()
@@ -386,8 +426,7 @@ internal static class GripEngine
             {
                 ClassName = className, Controller = sample.Controller,
                 Scope = PresetStore.HashScope(
-                    Member(_menuType, renewed ? "seu" : "currentPlayerName") as string ?? "",
-                    className, sample.Controller),
+                    CharacterId(avatar, renewed), className, sample.Controller),
                 Keys = candidate, Values = candidate.Select(key => PlayerPrefs.GetFloat(key)).ToArray(),
                 FlagKey = sample.FlagKey != null && sample.FlagKey.Contains(sample.ClassName,
                     StringComparison.Ordinal)
