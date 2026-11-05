@@ -31,8 +31,9 @@ public sealed class LiveAdjustmentCapture : MonoBehaviour
         public Transform Transform = null!;
         public string Path = "";
         public int Rank;
-        public Vector3 FirstPos, LastPos;
-        public Quaternion FirstRot, LastRot;
+        public bool WeaponCandidate;
+        public Vector3 FirstPos, LastPos, FirstWorldPos, LastWorldPos;
+        public Quaternion FirstRot, LastRot, FirstWorldRot, LastWorldRot;
         public bool FirstActive, LastActive;
     }
     private readonly List<Watch> _watched = new();
@@ -136,63 +137,134 @@ public sealed class LiveAdjustmentCapture : MonoBehaviour
         }
         finally { _busy = false; }
     }
+    // This scanner deliberately DOES NOT classify everything under a
+    // controller as interesting. In v0.1.2 the inherited path match gave
+    // finger bones priority over the actual equipped wand.
     private void Scan()
     {
-        // Only live active scene transforms. The old FindObjectsOfTypeAll scan
-        // selected inactive prefabs and hundreds of repeated other-player wands.
+        var candidates = new Dictionary<int, Watch>();
         var known = new HashSet<int>();
         foreach (Watch w in _watched)
             if (w.Transform != null) known.Add(w.Transform.GetInstanceID());
-        var candidates = new List<Watch>();
-        int inspected = 0, relevant = 0;
+
+        void Offer(Transform t, int rank, bool weapon)
+        {
+            if (t == null || !t.gameObject.activeInHierarchy) return;
+            int id = t.GetInstanceID();
+            if (known.Contains(id)) return;
+            if (candidates.TryGetValue(id, out Watch? existing))
+            {
+                if (rank > existing.Rank) existing.Rank = rank;
+                if (weapon) existing.WeaponCandidate = true;
+                return;
+            }
+            try
+            {
+                candidates[id] = new Watch {
+                    Transform = t, Path = PathOf(t), Rank = rank,
+                    WeaponCandidate = weapon,
+                    FirstPos = t.localPosition, LastPos = t.localPosition,
+                    FirstRot = t.localRotation, LastRot = t.localRotation,
+                    FirstWorldPos = t.position, LastWorldPos = t.position,
+                    FirstWorldRot = t.rotation, LastWorldRot = t.rotation,
+                    FirstActive = true, LastActive = true
+                };
+            }
+            catch { }
+        }
+
+        int inspected = 0, directWeaponHits = 0, rigHits = 0;
         foreach (Transform t in UnityEngine.Object.FindObjectsOfType<Transform>())
         {
             if (++inspected > MaxScan) break;
             try
             {
-                if (t == null || !t.gameObject.activeInHierarchy ||
-                    !known.Add(t.GetInstanceID())) continue;
-                string path = PathOf(t);
+                if (t == null || !t.gameObject.activeInHierarchy) continue;
                 string name = t.gameObject.name;
-                if (!Relevant(name) && !Relevant(path)) continue;
-                relevant++;
-                int score = (Has(path, "PlayerRigv4") ? 240 : 0) +
-                    (Has(path, "LocalPlayer") ? 120 : 0) +
-                    (Has(name, "Wand") ? 120 : 0) +
-                    (Has(name, "Weapon") ? 90 : 0) +
-                    (Has(name, "Adjust") ? 100 : 0) +
-                    (Has(path, "Runemage") ? 90 : 0) +
-                    (Has(path, "Controller (right)") ? 60 : 0) +
-                    (Has(path, "Controller (left)") ? 55 : 0) +
-                    (Has(name, "Hand") ? 45 : 0) +
-                    (Has(path, "Grip") || Has(path, "Offset") ? 50 : 0) -
-                    (Has(path, "OtherPlayer") ? 180 : 0) -
-                    (Has(path, "TransmogStation") ? 100 : 0) -
-                    (Has(path, "Npc") ? 90 : 0);
-                candidates.Add(new Watch {
-                    Transform = t, Path = path, Rank = score,
-                    FirstPos = t.localPosition, LastPos = t.localPosition,
-                    FirstRot = t.localRotation, LastRot = t.localRotation,
-                    FirstActive = true, LastActive = true
-                });
+                // Require a DIRECT name match; inherited parent paths must
+                // never admit all finger bones, hand mesh and other descendants.
+                bool weapon = Has(name,"wand") || Has(name,"weapon") ||
+                    Has(name,"adjust") || Has(name,"grip") ||
+                    Has(name,"offset") || Has(name,"holdpoint");
+                string path = PathOf(t);
+                bool localRig = path.StartsWith("PlayerRigv4/", StringComparison.Ordinal);
+                bool rigAnchor = localRig && (
+                    name == "Controller (right)" || name == "Controller (left)" ||
+                    name == "Grabber" || name == "Hand" ||
+                    name == "RightHandAnchor" || name == "LeftHandAnchor" ||
+                    name == "Right Hand Target" || name == "Left Hand Target" ||
+                    name == "HoldPoint" || name == "UIPointer");
+                if (!weapon && !rigAnchor) continue;
+                if (weapon) directWeaponHits++;
+                if (rigAnchor) rigHits++;
+
+                bool scenery = Has(path,"OtherPlayer") ||
+                    Has(path,"TransmogStation") || Has(path,"WeaponRack") ||
+                    Has(path,"Shop") || Has(path,"Npc") || Has(path,"Pedestal");
+                int priority = (weapon ? 500 : 150) +
+                    (Has(name,"wand") ? 300 : 0) +
+                    (Has(name,"adjust") ? 240 : 0) +
+                    (Has(name,"grip") || Has(name,"offset") ? 60 : 0) +
+                    (Has(path,"Runemage") ? 160 : 0) +
+                    (Has(name,"(Clone)") ? 120 : 0) +
+                    (localRig ? 180 : 0) -
+                    (scenery ? 700 : 0);
+                Offer(t, priority, weapon);
+                // Follow the wand's actual holder: v0.1.2 found
+                // "New Game Object/wandT2c(Clone)(Clone)" with constant
+                // LOCAL coordinates, so its PARENTS matter.
+                if (weapon && !scenery)
+                {
+                    Transform? p = t.parent;
+                    for (int depth = 0; p != null && depth < 3; depth++, p = p.parent)
+                    {
+                        Offer(p, priority - (depth + 1) * 20, true);
+                    }
+                }
             }
             catch { }
         }
-        int added = 0;
-        var usedPaths = new HashSet<string>(StringComparer.Ordinal);
-        foreach (Watch w in _watched) usedPaths.Add(w.Path);
-        foreach (Watch w in candidates.OrderByDescending(w => w.Rank))
+
+        int added = 0, replaced = 0;
+        foreach (Watch w in candidates.Values.OrderByDescending(w=>w.Rank))
         {
-            if (_watched.Count >= MaxWatched) break;
-            if (!usedPaths.Add(w.Path)) continue;
+            if (_watched.Count >= MaxWatched)
+            {
+                // Keep rescans useful: a newly spawned real weapon may replace
+                // a lower-priority unrelated object seen on the first scan.
+                Watch? lowest = _watched.OrderBy(x=>x.Rank).FirstOrDefault();
+                if (lowest == null || lowest.Rank >= w.Rank) continue;
+                _watched.Remove(lowest);
+                replaced++;
+            }
             _watched.Add(w);
-            if (++added <= 40)
-                Add("ACTIVE WATCH " + w.Path + " priority=" + w.Rank +
-                    " initialPos=" + V(w.FirstPos) +
-                    " initialRot=" + Q(w.FirstRot));
+            added++;
+            if (added <= 42)
+                Add("FOCUSED WATCH " + w.Path + " rank=" + w.Rank +
+                    " weapon=" + w.WeaponCandidate +
+                    " local=" + V(w.FirstPos) + " " + Q(w.FirstRot) +
+                    " world=" + V(w.FirstWorldPos) +
+                    " components=" + ComponentTypes(w.Transform));
         }
-        Add($"ACTIVE SCENE SCAN inspected={inspected} relevant={relevant} " +
-            $"candidates={candidates.Count} newlyWatched={added} watched={_watched.Count}");
+        Add($"FOCUSED SCAN inspected={inspected} directWeapon={directWeaponHits} " +
+            $"rigAnchors={rigHits} matches={candidates.Count} " +
+            $"added={added} replaced={replaced} watching={_watched.Count}");
+    }
+
+    private static string ComponentTypes(Transform t)
+    {
+        try
+        {
+            var names = new List<string>();
+            foreach (Component c in t.gameObject.GetComponents<Component>())
+            {
+                if (c == null) continue;
+                names.Add(c.GetType().Name);
+                if (names.Count >= 12) break;
+            }
+            return "[" + string.Join(",", names) + "]";
+        }
+        catch { return "[unavailable]"; }
     }
     private void ReadInputs()
     {
@@ -243,25 +315,37 @@ public sealed class LiveAdjustmentCapture : MonoBehaviour
     {
         _samples++;
         int changed = 0;
-        foreach (Watch w in _watched)
+        // Priority order puts weapon/holder changes before ordinary hands.
+        foreach (Watch w in _watched.OrderByDescending(x => x.Rank))
         {
             try
             {
                 if (w.Transform == null) continue;
-                Vector3 p = w.Transform.localPosition;
-                Quaternion r = w.Transform.localRotation;
+                Vector3 p = w.Transform.localPosition, world = w.Transform.position;
+                Quaternion r = w.Transform.localRotation, worldRot = w.Transform.rotation;
                 bool active = w.Transform.gameObject.activeInHierarchy;
                 float meters=Vector3.Distance(p,w.LastPos);
                 float degrees=Quaternion.Angle(r,w.LastRot);
-                if (meters<0.0007f && degrees<0.12f && active==w.LastActive) continue;
-                if (++changed<=7)
-                    Add($"TRANSFORM {w.Path} dPos={meters:0.0000}m dRot={degrees:0.00}deg active={active} pos={V(p)} rot={Q(r)}");
+                float worldMeters=Vector3.Distance(world,w.LastWorldPos);
+                float worldDegrees=Quaternion.Angle(worldRot,w.LastWorldRot);
+                bool localChange=meters >= 0.0007f || degrees >= 0.12f || active != w.LastActive;
+                bool worldChange=w.WeaponCandidate &&
+                    (worldMeters >= 0.007f || worldDegrees >= 2f);
+                if (!localChange && !worldChange) continue;
+                if (++changed <= 12)
+                {
+                    Add($"TRANSFORM {w.Path} weapon={w.WeaponCandidate} " +
+                        $"localDelta={meters:0.0000}m/{degrees:0.00}deg " +
+                        $"worldDelta={worldMeters:0.0000}m/{worldDegrees:0.00}deg " +
+                        $"active={active} local={V(p)} rot={Q(r)} world={V(world)}");
+                }
                 w.LastPos=p; w.LastRot=r; w.LastActive=active;
+                w.LastWorldPos=world; w.LastWorldRot=worldRot;
             }
             catch { }
         }
-        if (changed>7 && _samples%10==0)
-            Add("Further changed transforms suppressed: "+(changed-7));
+        if (changed>12 && _samples%10==0)
+            Add("Further changed transforms suppressed: "+(changed-12));
     }
     private void OnDestroy()
     {
@@ -274,7 +358,7 @@ public sealed class LiveAdjustmentCapture : MonoBehaviour
         {
             Add("STOP: "+reason);
             var sb = new StringBuilder(150000);
-            sb.AppendLine("ORBUS WEAPON ADJUSTMENTS LIVE DIAGNOSTIC v0.1.2");
+            sb.AppendLine("ORBUS WEAPON ADJUSTMENTS LIVE DIAGNOSTIC v0.1.3");
             sb.AppendLine("Read-only: these input edges are NOT verified game callbacks.");
             sb.AppendLine("Review paths for player names before sharing. No UI text or network data collected.");
             sb.AppendLine($"reason={reason} seconds={Time.realtimeSinceStartup-_started:0.00} samples={_samples} watched={_watched.Count} triggers={_presses} dropped={_overflow}");
@@ -286,8 +370,9 @@ public sealed class LiveAdjustmentCapture : MonoBehaviour
                 try
                 {
                     if (w.Transform==null) { sb.AppendLine("DESTROYED "+w.Path); continue; }
-                    sb.AppendLine(w.Path+" start="+V(w.FirstPos)+" "+Q(w.FirstRot)+
+                    sb.AppendLine(w.Path+" weapon="+w.WeaponCandidate+" start="+V(w.FirstPos)+" "+Q(w.FirstRot)+
                         " end="+V(w.Transform.localPosition)+" "+Q(w.Transform.localRotation)+
+                        " worldBefore="+V(w.FirstWorldPos)+" worldAfter="+V(w.Transform.position)+
                         " activeBefore="+w.FirstActive+" activeAfter="+w.Transform.gameObject.activeInHierarchy);
                 }
                 catch { sb.AppendLine("UNAVAILABLE "+w.Path); }
