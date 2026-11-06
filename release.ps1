@@ -22,7 +22,7 @@ try {
     Write-Host ''
     Write-Host '====================================================' -ForegroundColor Cyan
     Write-Host ' OrbusWeaponAdjustments -> GitHub Releases -> RM' -ForegroundColor Cyan
-    Write-Host ' v0.2.5 active grip indicator, compact rows and direct class weapon adjustment' -ForegroundColor Yellow
+    Write-Host ' v0.3.0 offline share codes and safe Imported N presets' -ForegroundColor Yellow
     Write-Host '====================================================' -ForegroundColor Cyan
     Write-Host ''
 
@@ -133,7 +133,7 @@ try {
         CheckExit 'Checking existing GitHub release tags'
         $releaseExists = $publishedTags -contains $tag
         if (-not $releaseExists) {
-            $notes = 'First native PowerUI Weapon Presets test: named per-class/controller/character presets, protected first-run grip backups, durable storage outside RM instances, confirmation before Trash deletion, Rename, Restore, manual backup export and safe Load/Undo through verified native grip keys. Legacy diagnostics remain available. THIS IS THE FIRST UNVERIFIED LIVE TEST BUILD; use Backup All Presets and verify your existing grip before loading.'
+            $notes = 'v0.3.0 adds OFFLINE, exact-float grip share codes with one-click Windows clipboard Copy/Paste, class/controller preview and Confirm Import as Imported N without applying. Portable imports store no sender PlayerPrefs keys, preserve schema-1 originals and backups, and use local native keys only at Load. No RebornMenu update or manual DLL install needed. First live test: verify copying, cross-class import, rename and Load/Undo.'
             $commit = (& git rev-parse HEAD).Trim()
             CheckExit 'Reading source commit'
             $maxAttempts = 4
@@ -157,7 +157,7 @@ try {
                 if ($listOkay) {
                     Write-Host "Publishing $tag (attempt $attempt/$maxAttempts)..." -ForegroundColor Cyan
                     try {
-                        & gh release create $tag $dll --repo $repo --target $commit --title "OrbusWeaponAdjustments $tag - Native Presets Test" --notes $notes
+                        & gh release create $tag $dll --repo $repo --target $commit --title "OrbusWeaponAdjustments $tag - Offline Share Codes" --notes $notes
                         if ($LASTEXITCODE -eq 0) {
                             $releaseExists = $true
                             break

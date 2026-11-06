@@ -1,8 +1,8 @@
 # OrbusWeaponAdjustments
 
-Standalone BepInEx IL2CPP plugin for OrbusVR. **v0.2.5 adds verified active-grip highlighting, a clean two-row preset layout, and direct active-class weapon adjustment to the RebornMenu Mods page into WeaponAdjustments' own RebornMenu Mods page.** Vanilla General Settings is left untouched. Save and Rename use Orbus's native VR keyboard, and a compact class-specific list shows Load / Rename / Delete beside each named preset. Automatic originals, backups, Trash and the legacy diagnostics are preserved.
+Standalone BepInEx IL2CPP plugin for OrbusVR. **v0.3.0 adds offline share codes and one-click clipboard Import/Share to the dedicated RebornMenu Mods page.** Imports are automatically named Imported 1, Imported 2, etc., under the correct class. Existing named presets, original backups, recovery Trash, native Adjust Weapon Grip and the on-page VR naming keyboard are preserved. Vanilla General Settings is untouched.
 
-**First-test warning:** The v0.2.4 additions still require a live Spades test. The preset manager is under Settings → Mods → WeaponAdjustments, not in the vanilla General Settings section. The mod fails closed when the class, exact live PlayerPrefs keys, or vanilla rig refresh method cannot be verified. A preset cannot load until its class's six reader keys and enable flag are known, so a class may show "pending" on its first visit. Don't use Reset on a valuable grip until the initial Original backup appears.
+**First-test warning:** v0.3.0's Win32 clipboard and portable-keyless imports need their first live Spades test. The preset manager is under Settings → Mods → WeaponAdjustments. Importing never automatically loads or overwrites a grip, and Load remains locked until the recipient's native adjustment keys and enabled flag have been verified. Don't Reset a valuable grip before its Original backup appears.
 
 Presets, Trash, immutable originals, exports and before-load backups live under `%LOCALAPPDATA%\\OrbusWeaponAdjustments\\Presets\\v1`, **outside RebornManager's instance and DLL update directories**. No network calls or manual DLL installation are required.
 
@@ -298,3 +298,44 @@ still needs a live Spades test, as do the rotation visuals after loading.
 RebornMenu v0.2.11+ already supports the page; no RebornMenu update.
 
 See docs/PRESETS_V025_TEST.md for verification steps.
+
+## v0.3.0 — offline share codes and Imported N
+
+**No files to download, no account, no server and no RebornMenu update.**
+Select a preset's Share button to copy a complete offline OW1 code to
+Windows clipboard. Paste it to a friend through Discord. They open
+Import Code (Paste from Clipboard), review the class/compatibility
+and six grip values, and select Confirm Import.
+
+- The receiving mod chooses Imported 1, Imported 2, etc. in the
+  **destination class's** collection. Trashed names also count to avoid
+  collisions with future Restore operations. Rename as normal afterward.
+- Importing Bard while wearing Runemage saves into Bard's collection,
+  **without switching class or changing your current grip**.
+- Codes use uppercase Base32 grouped for readability. They contain a
+  version, class, controller compatibility fingerprint, exactly six
+  float32 values (rotation XYZ and position XYZ) and an integrity check.
+- Codes do NOT contain the sender's player name, character/database ID,
+  actual controller string, or PlayerPrefs keys. Checksum guards accidental
+  corruption, not malicious senders.
+- Only the same verified controller profile can import a code. Invalid,
+  unsafe, corrupt or duplicate values are refused without modifying
+  the player's presets.
+- Every import makes an automatic local backup **before** creating an
+  independent new preset file; older records and protected Originals
+  are never replaced.
+- Imported files use schema 2 (six values but **no foreign save keys**).
+  Existing schema 1 records are left completely unchanged. At Load, the
+  receiver's exact locally observed keys are used and a rollback backup
+  is written before any PlayerPrefs change.
+- If clipboard copy fails, the code stays visible on-screen. If clipboard
+  paste fails or its contents are invalid, the existing pointer keyboard
+  can enter/correct an OW1 code in VR. Paste is strongly preferred.
+- There are now four equally spaced row actions: Load / Rename /
+  Delete / Share. The top of the page includes Import Code.
+
+Because older versions do not understand schema 2, downgrading after
+importing may lock preset editing rather than discarding unknown data.
+Reinstall v0.3.0+ in that case; **never delete the local preset folder**.
+
+See docs/SHARE_CODES_V030_TEST.md for the first-live-test checklist.

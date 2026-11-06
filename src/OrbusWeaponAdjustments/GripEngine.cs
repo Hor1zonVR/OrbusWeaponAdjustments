@@ -270,6 +270,28 @@ internal static class GripEngine
         }
     }
 
+    // Resolve a FUTURE class's storage scope without pretending we have
+    // equipped it or found its vanilla save keys. Used by offline imports:
+    // a Bard code can go to Bard's collection while Runemage is equipped.
+    internal static bool TryTargetScope(string className, out string scope,
+        out string controller)
+    {
+        scope = "";
+        controller = "";
+        string canonical = GripShareCode.CanonicalClass(className);
+        if (canonical.Length == 0 ||
+            !AllClasses.Contains(canonical, StringComparer.OrdinalIgnoreCase) ||
+            !TryContext(out object? avatar, out GripSnapshot live) ||
+            avatar == null) return false;
+        bool renewed = avatar.GetType().Name == "cbn";
+        string character = CharacterId(avatar, renewed);
+        if (string.IsNullOrWhiteSpace(character) || character.Length > 120)
+            return false;
+        controller = live.Controller;
+        scope = PresetStore.HashScope(character, canonical, controller);
+        return scope.Length == 64;
+    }
+
     private static void BeginRigReset()
     {
         if (_ourWrite || !_installed || !TryContext(out _, out GripSnapshot ctx)) return;
@@ -567,23 +589,35 @@ internal static class GripEngine
             avatar is not Component owner)
             return RefuseLoad("class-not-ready", "Your class isn't ready yet. Close and reopen Settings, then try again. Your grip is unchanged.");
         GripPreset? p = PresetStore.List(ctx.Scope).FirstOrDefault(x => x.Id == id);
-        if (p == null || p.Scope != ctx.Scope || p.ClassName != ctx.ClassName ||
-            p.Controller != ctx.Controller || p.Keys.Length != 6 ||
-            p.Values.Length != 6 || p.Values.Any(x => !float.IsFinite(x)) ||
-            p.Keys.Distinct(StringComparer.Ordinal).Count() != 6)
+        if (p == null || p.Scope != ctx.Scope ||
+            !string.Equals(p.ClassName, ctx.ClassName, StringComparison.OrdinalIgnoreCase) ||
+            p.Controller != ctx.Controller ||
+            (p.Schema != 1 && p.Schema != 2) ||
+            (p.Schema == 1 && (p.Keys.Length != 6 ||
+                p.Keys.Distinct(StringComparer.Ordinal).Count() != 6)) ||
+            (p.Schema == 2 && (p.Keys.Length != 0 ||
+                p.FlagKey != null || p.Origin != "share-code" ||
+                !GripShareCode.SafeValues(p.Values))) ||
+            p.Values.Length != 6 || p.Values.Any(x => !float.IsFinite(x)))
             return RefuseLoad("preset-mismatch", "This preset doesn't match your current class or its saved data is damaged. Nothing changed.");
         if (!PresetStore.HasOriginal(ctx.Scope)) return RefuseLoad("original-unprotected", "Your original grip hasn't been backed up yet, so loading is locked for safety. Nothing changed.");
 
         // Exact keys must come from a real native reader or submit event,
         // never from an unverified class-name substitution alone.
         if (!LastKnown.TryGetValue(ctx.Scope, out GripSnapshot? observed) ||
-            !p.Keys.SequenceEqual(observed.Keys, StringComparer.Ordinal))
+            observed.Keys.Length != 6 ||
+            observed.Keys.Any(string.IsNullOrWhiteSpace) ||
+            observed.Keys.Distinct(StringComparer.Ordinal).Count() != 6 ||
+            (p.Schema == 1 && !p.Keys.SequenceEqual(observed.Keys, StringComparer.Ordinal)))
             return RefuseLoad("live-keys-not-read", "Orbus hasn't read this class's grip settings yet. Switch classes and back, then try again. Your grip is unchanged.");
-        string? flagKey = p.FlagKey ?? observed.FlagKey;
+        // v2 imported files do NOT contain the sender's PlayerPrefs keys.
+        // Resolve every key from the recipient's live, class-scoped reader.
+        string[] keys = p.Schema == 2 ? observed.Keys : p.Keys;
+        string? flagKey = p.Schema == 2 ? observed.FlagKey : p.FlagKey ?? observed.FlagKey;
         if (flagKey == null && KnownFlags.TryGetValue(ctx.Scope, out var known) &&
-            FlagMatchesKeys(known.key, p.Keys))
+            FlagMatchesKeys(known.key, keys))
             flagKey = known.key;
-        if (flagKey != null && !FlagMatchesKeys(flagKey, p.Keys))
+        if (flagKey != null && !FlagMatchesKeys(flagKey, keys))
             return RefuseLoad("key-mismatch", "We couldn't safely match this preset to your weapon. Your grip is unchanged.");
         if (string.IsNullOrWhiteSpace(flagKey) ||
             (observed.FlagKey != null && flagKey != observed.FlagKey))
@@ -593,12 +627,12 @@ internal static class GripEngine
         var previous = new GripSnapshot
         {
             Scope = ctx.Scope, ClassName = ctx.ClassName, Controller = ctx.Controller,
-            Keys = (string[])p.Keys.Clone(), FlagKey = flagKey,
-            Exists = p.Keys.Select(PlayerPrefs.HasKey).ToArray(),
+            Keys = (string[])keys.Clone(), FlagKey = flagKey,
+            Exists = keys.Select(key => PlayerPrefs.HasKey(key)).ToArray(),
             FlagExists = PlayerPrefs.HasKey(flagKey),
             FlagValue = PlayerPrefs.HasKey(flagKey) ? PlayerPrefs.GetInt(flagKey) : 0
         };
-        previous.Values = p.Keys.Select((key, i) =>
+        previous.Values = keys.Select((key, i) =>
             previous.Exists[i] ? PlayerPrefs.GetFloat(key) : 0f).ToArray();
         if (previous.Values.Any(x => !float.IsFinite(x)))
             return RefuseLoad("invalid-current-grip", "Orbus returned an invalid grip position, so we didn't change anything.");
@@ -614,12 +648,12 @@ internal static class GripEngine
                 after.GetInstanceID() != owner.GetInstanceID())
                 return RefuseLoad("class-changed", "You changed class while loading. Nothing was applied.");
 
-            for (int i = 0; i < 6; i++) PlayerPrefs.SetFloat(p.Keys[i], p.Values[i]);
+            for (int i = 0; i < 6; i++) PlayerPrefs.SetFloat(keys[i], p.Values[i]);
             PlayerPrefs.SetInt(flagKey, 1);
             PlayerPrefs.Save();
             _apply.Invoke(avatar, null);
 
-            if (p.Keys.Where((key, i) =>
+            if (keys.Where((key, i) =>
                 Math.Abs(PlayerPrefs.GetFloat(key) - p.Values[i]) > 0.00001f).Any() ||
                 PlayerPrefs.GetInt(flagKey) != 1)
                 throw new InvalidOperationException("Preference readback mismatch");
@@ -627,7 +661,7 @@ internal static class GripEngine
             LastKnown[ctx.Scope] = new GripSnapshot
             {
                 Scope = ctx.Scope, ClassName = ctx.ClassName, Controller = ctx.Controller,
-                Keys = (string[])p.Keys.Clone(), Values = (float[])p.Values.Clone(),
+                Keys = (string[])keys.Clone(), Values = (float[])p.Values.Clone(),
                 FlagKey = flagKey, FlagValue = 1
             };
             Status = ctx.ClassName + ": " + p.Name + " loaded";

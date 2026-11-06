@@ -101,15 +101,23 @@ internal static class PresetStore
 
     private static bool ValidName(string name) => name.Length >= 1 && name.Length <= 48 &&
         !name.Any(c => char.IsControl(c) || c == '<' || c == '>');
+    // Schema 1 = existing local vanilla keys; schema 2 = imported values
+    // without ANY foreign PlayerPrefs keys. Old schema 1 is never migrated,
+    // rewritten, dropped, or stripped when new share codes are introduced.
     private static bool ValidRecord(GripPreset p) =>
-        p.Schema == 1 && Guid.TryParseExact(p.Id, "N", out _) &&
+        (p.Schema == 1 || p.Schema == 2) &&
+        Guid.TryParseExact(p.Id, "N", out _) &&
         ValidName(p.Name) && p.Scope.Length == 64 &&
         !string.IsNullOrWhiteSpace(p.ClassName) && !string.IsNullOrWhiteSpace(p.Controller) &&
-        p.Keys.Length == 6 && p.Values.Length == 6 &&
-        p.Keys.All(k => !string.IsNullOrWhiteSpace(k)) &&
-        p.Keys.Distinct(StringComparer.Ordinal).Count() == 6 &&
-        p.Values.All(float.IsFinite) &&
-        (p.FlagKey == null || p.FlagKey.Length is > 0 and < 1024);
+        p.Values.Length == 6 && p.Values.All(float.IsFinite) &&
+        (p.Schema == 1
+            ? p.Keys.Length == 6 &&
+              p.Keys.All(k => !string.IsNullOrWhiteSpace(k)) &&
+              p.Keys.Distinct(StringComparer.Ordinal).Count() == 6 &&
+              (p.FlagKey == null || p.FlagKey.Length is > 0 and < 1024)
+            : p.Keys.Length == 0 && p.FlagKey == null && p.FlagValue == 1 &&
+              !p.Original && p.Origin == "share-code" &&
+              GripShareCode.SafeValues(p.Values));
 
     private static IEnumerable<GripPreset> Enumerate(string directory)
     {
@@ -219,6 +227,84 @@ internal static class PresetStore
         catch (Exception ex) { return (false, "Save failed: " + ex.GetType().Name + ". Existing files untouched."); }
     }
 
+    internal static string NextImportedName(string scope)
+    {
+        if (!Ready()) return "";
+        try
+        {
+            // Include Trash so restoring an old Imported N can't collide
+            // with a newly imported record using the same name.
+            var names = new HashSet<string>(
+                Enumerate(Active).Concat(Enumerate(Trash))
+                    .Where(p => p.Scope == scope).Select(p => p.Name),
+                StringComparer.OrdinalIgnoreCase);
+            for (int i = 1; i < 100000; i++)
+            {
+                string next = "Imported " + i;
+                if (!names.Contains(next)) return next;
+            }
+            return "";
+        }
+        catch (Exception ex)
+        {
+            Error = "Could not check imported names (" + ex.GetType().Name + "); imports locked.";
+            return "";
+        }
+    }
+
+    private static bool SameBits(float[] left, float[] right) =>
+        left.Length == 6 && right.Length == 6 &&
+        Enumerable.Range(0, 6).All(i =>
+            BitConverter.SingleToInt32Bits(left[i]) ==
+            BitConverter.SingleToInt32Bits(right[i]));
+
+    internal static (bool ok, string message, string name) SaveImported(
+        string scope, string className, string controller, float[] values)
+    {
+        if (!Ready()) return (false, Error, "");
+        if (scope.Length != 64 || !GripShareCode.IsSupportedClass(className) ||
+            string.IsNullOrWhiteSpace(controller) || controller.Length > 60 ||
+            !GripShareCode.SafeValues(values))
+            return (false, "Invalid imported grip; nothing saved.", "");
+
+        try
+        {
+            // Validate every record in both collections before writing.
+            var existing = Enumerate(Active).Concat(Enumerate(Trash)).ToArray();
+            if (existing.Any(p => p.Scope == scope && SameBits(p.Values, values)))
+                return (false, "You already have this grip saved (or in Trash).", "");
+            string name = NextImportedName(scope);
+            if (!Ready() || name.Length == 0)
+                return (false, "Couldn't reserve an imported name; nothing saved.", "");
+
+            // A full local backup is written BEFORE the new independent
+            // preset. Even a failed backup aborts this import.
+            var safety = BackupAll();
+            if (!safety.ok)
+                return (false, "Couldn't back up your presets; import cancelled.", "");
+
+            var imported = new GripPreset
+            {
+                Schema = 2,
+                Scope = scope, ClassName = GripShareCode.CanonicalClass(className),
+                Controller = controller, Name = name, Original = false,
+                Origin = "share-code",
+                Values = (float[])values.Clone(), Keys = Array.Empty<string>(),
+                FlagKey = null, FlagValue = 1
+            };
+            if (!ValidRecord(imported))
+                return (false, "Imported data failed validation; nothing saved.", "");
+            WriteNew(Path.Combine(Active, imported.Id + ".json"), imported);
+            return (true, name + " saved under " + imported.ClassName +
+                ". It won't change your weapon until you select Load.", name);
+        }
+        catch (Exception ex)
+        {
+            return (false, "Import couldn't be saved (" + ex.GetType().Name +
+                "). Existing presets are untouched.", "");
+        }
+    }
+
     private static (bool ok, string message) Change(string id, string scope, string? newName, bool delete)
     {
         if (!Ready()) return (false, Error);
@@ -241,7 +327,7 @@ internal static class PresetStore
                 return (false, "That name is already used in this class.");
             var copy = new GripPreset
             {
-                Id = p.Id, Name = trimmed, Scope = p.Scope, ClassName = p.ClassName,
+                Schema = p.Schema, Id = p.Id, Name = trimmed, Scope = p.Scope, ClassName = p.ClassName,
                 Controller = p.Controller, Keys = p.Keys, Values = p.Values, FlagKey = p.FlagKey,
                 FlagValue = p.FlagValue, Original = p.Original, Origin = p.Origin,
                 CreatedUtc = p.CreatedUtc, UpdatedUtc = DateTime.UtcNow.ToString("O")

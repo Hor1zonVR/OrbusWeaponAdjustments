@@ -32,6 +32,11 @@ public sealed class WeaponPresetUi : MonoBehaviour
     private string _lastLoadedId = "";
     private string _lastFingerprint = "";
     private bool _showTrash;
+    private string _lastShareCode = "";
+    private string _pendingCode = "";
+    private GripShareCode.Parsed? _pendingImport;
+    private bool _typingCode;
+    private string _codeBuffer = "";
     private float _nextPoll;
     private string _lastBindWarning = "";
     // Local, temporary naming editor. Nothing touches preset files until
@@ -124,6 +129,10 @@ public sealed class WeaponPresetUi : MonoBehaviour
         _message = "";
         _messageSuccess = false;
         _editingName = false;
+        _typingCode = false;
+        _pendingImport = null;
+        _pendingCode = "";
+        _lastShareCode = "";
         GripEngine.TryImportOnFirstMenu();
         Refresh(true);
         Plugin.ModLog.LogInfo("[WeaponAdjustments/NativeUI] Opened dedicated presets in RebornMenu Mods tab.");
@@ -217,6 +226,143 @@ public sealed class WeaponPresetUi : MonoBehaviour
             _lastLoadedId = id;
         }
         Refresh(true);
+    }
+
+    private void SharePreset(GripPreset preset)
+    {
+        if (!GripEngine.TryContext(out _, out GripSnapshot ctx) ||
+            ctx.Scope != preset.Scope)
+        {
+            _message = "Class changed; select Share again.";
+            _messageSuccess = false;
+            Refresh(true);
+            return;
+        }
+        if (!GripShareCode.TryEncode(preset, out string share, out string error))
+        {
+            _message = error;
+            _messageSuccess = false;
+            Refresh(true);
+            return;
+        }
+        _lastShareCode = share;
+        bool copied = PresetClipboard.Copy(share, out string info);
+        _message = copied
+            ? "Code copied! Paste it into Discord to share this grip."
+            : info + " You can copy the code displayed below.";
+        _messageSuccess = copied;
+        Refresh(true);
+    }
+
+    private void PreviewCode(string code)
+    {
+        _pendingImport = null;
+        _pendingCode = "";
+        if (!GripShareCode.TryDecode(code, out GripShareCode.Parsed parsed,
+            out string error))
+        {
+            // Invalid clipboard text can be corrected without leaving VR.
+            _typingCode = true;
+            _codeBuffer = code.Trim().Length <= 100 ? code.Trim().ToUpperInvariant() : "";
+            _message = error + " Use the in-game letter buttons to correct it.";
+            _messageSuccess = false;
+            Refresh(true);
+            return;
+        }
+        if (!GripEngine.TryTargetScope(parsed.ClassName, out string targetScope,
+            out string localController))
+        {
+            _message = "Choose a character in Orbus before importing.";
+            _messageSuccess = false;
+            Refresh(true);
+            return;
+        }
+        if (!GripShareCode.IsCompatible(parsed, localController))
+        {
+            _message = "This code was made for a different controller type. " +
+                "Nothing was imported.";
+            _messageSuccess = false;
+            Refresh(true);
+            return;
+        }
+        if (PresetStore.NextImportedName(targetScope).Length == 0)
+        {
+            _message = "Couldn't check existing imported names. Nothing changed.";
+            _messageSuccess = false;
+            Refresh(true);
+            return;
+        }
+        _typingCode = false;
+        _codeBuffer = "";
+        _pendingImport = parsed;
+        _pendingCode = code;
+        _message = "Preview the preset below. Confirm to save it; your current grip won't change.";
+        _messageSuccess = false;
+        Refresh(true);
+    }
+
+    private void OpenImport()
+    {
+        _pendingImport = null;
+        _pendingCode = "";
+        if (PresetClipboard.Paste(out string code, out string error))
+        {
+            PreviewCode(code);
+            return;
+        }
+        // Clipboard isn't mandatory: the same already-tested PowerUI
+        // pointer keyboard allows entry of the uppercase Base32 code.
+        _typingCode = true;
+        _codeBuffer = "";
+        _message = error + " You can enter the code using the buttons below.";
+        _messageSuccess = false;
+        Refresh(true);
+    }
+
+    private void ConfirmImport()
+    {
+        if (_pendingImport == null || _pendingCode.Length == 0 ||
+            !GripShareCode.TryDecode(_pendingCode,
+                out GripShareCode.Parsed parsed, out string error))
+        {
+            _message = "That preview expired. Paste the code again.";
+            _messageSuccess = false;
+            _pendingImport = null;
+            _pendingCode = "";
+            Refresh(true);
+            return;
+        }
+        if (!GripEngine.TryTargetScope(parsed.ClassName, out string scope,
+            out string controller) || !GripShareCode.IsCompatible(parsed, controller))
+        {
+            _message = "Your character or controller changed. Import cancelled.";
+            _messageSuccess = false;
+            _pendingImport = null;
+            _pendingCode = "";
+            Refresh(true);
+            return;
+        }
+        var saved = PresetStore.SaveImported(scope, parsed.ClassName,
+            controller, parsed.Values);
+        _message = saved.message;
+        _messageSuccess = saved.ok;
+        _pendingImport = null;
+        _pendingCode = "";
+        Refresh(true);
+    }
+
+    private void UpdateCodePreview()
+    {
+        if (!SetHtml(ById(_document, "wa-code-preview"),
+                Escape(_codeBuffer.Length == 0 ? "Enter OW1-..." : _codeBuffer)))
+            Refresh(true);
+    }
+
+    private void AddCodeCharacter(char symbol)
+    {
+        if (!_typingCode || _codeBuffer.Length >= 100) return;
+        _codeBuffer += symbol;
+        UpdateCodePreview();
     }
 
     private string ToggleNativeAdjustment()
@@ -332,8 +478,10 @@ public sealed class WeaponPresetUi : MonoBehaviour
         // indices 3-5 are saved position. No rounding or transform writes.
         return presets.Where(p => p.Scope == live.Scope &&
             p.ClassName == live.ClassName && p.Controller == live.Controller &&
-            p.Keys.Length == 6 && p.Values.Length == 6 &&
-            p.Keys.SequenceEqual(live.Keys, StringComparer.Ordinal) &&
+            p.Values.Length == 6 &&
+            (p.Schema == 2 && p.Keys.Length == 0 ||
+             p.Schema == 1 && p.Keys.Length == 6 &&
+             p.Keys.SequenceEqual(live.Keys, StringComparer.Ordinal)) &&
             Enumerable.Range(0, 6).All(i =>
                 Math.Abs(p.Values[i] - live.Values[i]) <= 0.0001f))
             .Select(p => p.Id).ToList();
@@ -352,6 +500,10 @@ public sealed class WeaponPresetUi : MonoBehaviour
             _message = "";
             _messageSuccess = false;
             _editingName = false;
+            _typingCode = false;
+            _pendingImport = null;
+            _pendingCode = "";
+            _lastShareCode = "";
             force = true;
         }
         IReadOnlyList<GripPreset> active = identified
@@ -373,6 +525,7 @@ public sealed class WeaponPresetUi : MonoBehaviour
         string fingerprint = scope + "|" + GripEngine.Status + "|" + GripEngine.ContextStatus +
             "|" + PresetStore.Error + "|" + _message + "|" + _deleteId + "|" + _showTrash +
             "|" + _editingName + "|" + _editorPresetId + "|" + _messageSuccess +
+            "|" + _typingCode + "|" + _pendingCode + "|" + _lastShareCode + "|"+
             "|" + hasLiveGrip + "|" + verifiedFlag + "|" + activeId + "|" +
             string.Join(",", matching) + "|" +
             string.Join(",", active.Select(p => p.Id + p.Name)) +
@@ -407,7 +560,7 @@ public sealed class WeaponPresetUi : MonoBehaviour
                 .Append("<span style='font-size:13px;color:")
                 .Append(activeId.Length > 0 ? "#247137" : "#61482f")
                 .Append(";'>").Append(Escape(currentLabel)).Append("</span></div>");
-            if (!_editingName)
+            if (!_editingName && !_typingCode && _pendingImport == null)
                 MenuButton(html, "wa-adjust", "Adjust Weapon Grip");
             if (!originalProtected && !hasLiveGrip)
                 html.Append("<p style='font-size:12px;margin:4px 0 6px;'>")
@@ -420,9 +573,69 @@ public sealed class WeaponPresetUi : MonoBehaviour
             else if (!hasLiveGrip)
                 html.Append("<p style='font-size:12px;margin:4px 0 6px;'>")
                     .Append("Reading your current grip. If needed, change classes and back.</p>");
-            if (!_editingName && originalProtected && hasLiveGrip)
-                MenuButton(html, "wa-save", "Save Current Grip...");
-            if (_editingName)
+            if (!_editingName && !_typingCode && _pendingImport == null)
+            {
+                if (originalProtected && hasLiveGrip)
+                    MenuButton(html, "wa-save", "Save Current Grip...");
+                MenuButton(html, "wa-import", "Import Code (Paste from Clipboard)");
+            }
+            if (_typingCode)
+            {
+                html.Append("<div style='width:327px;border-top:1px solid #90795c;")
+                    .Append("padding:6px 0;'>")
+                    .Append("<h4 style='font-size:15px;'>Type a Share Code</h4>")
+                    .Append("<p style='font-size:12px;'>Paste from Windows is easier; ")
+                    .Append("manual typing also works.</p>")
+                    .Append("<p id='wa-code-preview' style='font-size:12px;")
+                    .Append("word-wrap:break-word;background:#e0d0b0;padding:6px;'>")
+                    .Append(Escape(_codeBuffer.Length == 0 ? "Enter OW1-..." : _codeBuffer))
+                    .Append("</p>");
+                int codeKey = 0;
+                foreach (string row in EditorRows)
+                {
+                    html.Append("<div style='position:relative;height:35px;width:330px;'>");
+                    for (int n = 0; n < row.Length; n++)
+                        RowButton(html, "wa-code-key-" + codeKey++, row[n].ToString(),
+                            2 + n * 33, 31);
+                    html.Append("</div>");
+                }
+                MenuButton(html, "wa-code-back", "Backspace");
+                MenuButton(html, "wa-code-preview-action", "Preview Code");
+                MenuButton(html, "wa-code-cancel", "Cancel Import");
+                html.Append("</div>");
+            }
+            else if (_pendingImport != null)
+            {
+                string targetScope = "";
+                string targetController = "";
+                bool compatible = GripEngine.TryTargetScope(
+                    _pendingImport.ClassName, out targetScope, out targetController) &&
+                    GripShareCode.IsCompatible(_pendingImport, targetController);
+                string suggestedName = compatible
+                    ? PresetStore.NextImportedName(targetScope) : "";
+                html.Append("<div style='width:325px;padding:6px;")
+                    .Append("background:#d6c3a2;border:1px solid #917958;'>")
+                    .Append("<h4 style='font-size:16px;margin:2px 0 6px;'>Import Preview</h4>")
+                    .Append("<p style='font-size:13px;'>Class: <strong>")
+                    .Append(Escape(_pendingImport.ClassName))
+                    .Append("</strong></p><p style='font-size:13px;'>Controller: ")
+                    .Append(compatible ? "Compatible" : "Not compatible")
+                    .Append("</p><p style='font-size:13px;'>Saved name: <strong>")
+                    .Append(Escape(suggestedName))
+                    .Append("</strong></p><p style='font-size:12px;'>Rotation (X/Y/Z): ")
+                    .Append(string.Join(", ", _pendingImport.Values.Take(3)
+                        .Select(v => v.ToString("0.###", CultureInfo.InvariantCulture))))
+                    .Append("</p><p style='font-size:12px;'>Position (X/Y/Z): ")
+                    .Append(string.Join(", ", _pendingImport.Values.Skip(3)
+                        .Select(v => v.ToString("0.###", CultureInfo.InvariantCulture))))
+                    .Append("</p><p style='font-size:12px;'>Importing saves a new preset. ")
+                    .Append("It won't change your current grip or overwrite other presets.</p>");
+                if (compatible && suggestedName.Length > 0)
+                    MenuButton(html, "wa-import-confirm", "Confirm Import");
+                MenuButton(html, "wa-import-cancel", "Cancel");
+                html.Append("</div>");
+            }
+            else if (_editingName)
             {
                 html.Append("<div style='width:331px;border-top:1px solid #90795c;")
                     .Append("border-bottom:1px solid #90795c;padding:7px 0;'>")
@@ -487,9 +700,10 @@ public sealed class WeaponPresetUi : MonoBehaviour
                     .Append(Escape(marker)).Append("</span>")
                     .Append("<div style='position:absolute;left:0;top:29px;")
                     .Append("width:325px;height:36px;'>");
-                RowButton(html, "wa-load-" + suffix, "Load", 5, 99);
-                RowButton(html, "wa-rename-" + suffix, "Rename", 114, 99);
-                RowButton(html, "wa-delete-" + suffix, "Delete", 223, 99, "#eed0aa");
+                RowButton(html, "wa-load-" + suffix, "Load", 4, 76);
+                RowButton(html, "wa-rename-" + suffix, "Rename", 85, 76);
+                RowButton(html, "wa-delete-" + suffix, "Delete", 166, 76, "#eed0aa");
+                RowButton(html, "wa-share-" + suffix, "Share", 247, 76);
                 html.Append("</div></div>");
                 if (_deleteId == preset.Id)
                 {
@@ -532,8 +746,13 @@ public sealed class WeaponPresetUi : MonoBehaviour
         if (!string.IsNullOrEmpty(PresetStore.Error))
             html.Append("<p style='font-size:12px;color:#a33;'>")
                 .Append(Escape(PresetStore.Error)).Append("</p>");
-        else if (!_editingName)
+        else if (!_editingName && !_typingCode && _pendingImport == null)
             MenuButton(html, "wa-backup", "Back Up All Presets");
+        if (_lastShareCode.Length > 0 && !_editingName && !_typingCode &&
+            _pendingImport == null)
+            html.Append("<p style='font-size:11px;background:#dfcda9;")
+                .Append("padding:6px;word-wrap:break-word;'>")
+                .Append(Escape(_lastShareCode)).Append("</p>");
         if (!string.IsNullOrEmpty(_message))
             html.Append("<p style='font-size:13px;margin:7px 0 6px;color:")
                 .Append(_messageSuccess ? "#257338" : "#4a3525")
@@ -551,6 +770,43 @@ public sealed class WeaponPresetUi : MonoBehaviour
 
         Bind("wa-adjust", () => Apply(ToggleNativeAdjustment));
         Bind("wa-save", () => AskForName("", scope, null));
+        Bind("wa-import", OpenImport);
+        if (_typingCode)
+        {
+            int key = 0;
+            foreach (string row in EditorRows)
+                foreach (char character in row)
+                {
+                    string keyId = "wa-code-key-" + key++;
+                    char c = character;
+                    Bind(keyId, () => AddCodeCharacter(c));
+                }
+            Bind("wa-code-back", () =>
+            {
+                if (_codeBuffer.Length > 0)
+                    _codeBuffer = _codeBuffer.Substring(0, _codeBuffer.Length - 1);
+                UpdateCodePreview();
+            });
+            Bind("wa-code-preview-action", () => PreviewCode(_codeBuffer));
+            Bind("wa-code-cancel", () =>
+            {
+                _typingCode = false;
+                _codeBuffer = "";
+                _message = "Import cancelled. Nothing changed.";
+                Refresh(true);
+            });
+        }
+        if (_pendingImport != null)
+        {
+            Bind("wa-import-confirm", ConfirmImport);
+            Bind("wa-import-cancel", () =>
+            {
+                _pendingImport = null;
+                _pendingCode = "";
+                _message = "Import cancelled. Nothing changed.";
+                Refresh(true);
+            });
+        }
         if (_editingName)
         {
             int keyNumber = 0;
@@ -582,6 +838,7 @@ public sealed class WeaponPresetUi : MonoBehaviour
             string key = i.ToString(CultureInfo.InvariantCulture);
             Bind("wa-load-" + key, () => LoadPreset(preset.Id));
             Bind("wa-rename-" + key, () => AskForName(preset.Name, scope, preset.Id));
+            Bind("wa-share-" + key, () => SharePreset(preset));
             Bind("wa-delete-" + key, () =>
             {
                 _deleteId = preset.Id;

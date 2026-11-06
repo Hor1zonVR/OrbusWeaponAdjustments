@@ -4,7 +4,7 @@ using BepInEx.Unity.IL2CPP;
 
 namespace OrbusWeaponAdjustments;
 
-[BepInPlugin("com.horizon.orbus.weaponadjustments", "OrbusWeaponAdjustments", "0.2.5")]
+[BepInPlugin("com.horizon.orbus.weaponadjustments", "OrbusWeaponAdjustments", "0.3.0")]
 public sealed class Plugin : BasePlugin
 {
     internal static BepInEx.Logging.ManualLogSource ModLog = null!;
@@ -41,7 +41,7 @@ public sealed class Plugin : BasePlugin
         AddComponent<AdjustmentDiagnostics>();
         AddComponent<LiveAdjustmentCapture>();
 
-        Log.LogInfo("[WeaponAdjustments v0.2.5] Active grip match indicator, clean preset rows and direct class adjustment toggle; diagnostics preserved.");
+        Log.LogInfo("[WeaponAdjustments v0.3.0] Offline share codes, safe clipboard imports and automatic Imported N names; diagnostics preserved.");
         Log.LogInfo("[WeaponAdjustments/Presets] Durable storage: " + PresetStore.Location);
         if (!string.IsNullOrEmpty(PresetStore.Error))
             Log.LogWarning("[WeaponAdjustments/Presets] " + PresetStore.Error);
