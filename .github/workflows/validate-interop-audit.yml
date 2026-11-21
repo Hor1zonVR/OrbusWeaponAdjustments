@@ -1,0 +1,49 @@
+name: Validate Orbus interop audit
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-audit:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Compile offline metadata analyzer
+        shell: pwsh
+        run: |
+          dotnet build tools/InteropAudit/InteropAudit.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw 'InteropAudit build failed.' }
+      - name: Check structural mapping with synthetic Unity classes
+        shell: pwsh
+        env:
+          DOTNET_ROLL_FORWARD: Major
+        run: |
+          $game = Join-Path $env:RUNNER_TEMP "SyntheticOrbus"
+          $interop = Join-Path $game "BepInEx\\interop"
+          New-Item -ItemType Directory -Force $interop | Out-Null
+          dotnet build tools/InteropAudit/Tests/FakeInterop.csproj -c Release -o $interop
+          if ($LASTEXITCODE -ne 0) { throw "Synthetic interop build failed." }
+          $out = @(dotnet run --project tools/InteropAudit/InteropAudit.csproj -c Release -- $game)
+          $exit = $LASTEXITCODE
+          $out | ForEach-Object { Write-Host $_ }
+          if ($exit -ne 0) { throw "Interop audit failed (exit $exit)." }
+          if (!($out -match "Strong adjuster candidates: 1")) { throw "Weapon candidate detection regressed." }
+          if (!($out -match "Strong rig candidates: 1")) { throw "Rig candidate detection regressed." }
+          $reportPath = ($out | Where-Object { $_ -like 'Saved report: *' } | Select-Object -Last 1) -replace '^Saved report: ', ''
+          $report = Get-Content -LiteralPath $reportPath -Raw
+          if ($report -notmatch 'com : UnityEngine.MonoBehaviour' -or
+              $report -notmatch 'ciu : UnityEngine.MonoBehaviour' -or
+              $report -notmatch 'plausibleMenu : UnityEngine.MonoBehaviour' -or
+              $report -notmatch 'localPlayer.avatar:class plausibleAvatar') {
+              throw "Audit omitted synthetic class relationships."
+          }
