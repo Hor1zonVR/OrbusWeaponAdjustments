@@ -385,6 +385,7 @@ internal static class GripEngine
     {
         scope = "";
         controller = "";
+        if (_renewedCurrent) return false;
         string canonical = GripShareCode.CanonicalClass(className);
         if (canonical.Length == 0 ||
             !AllClasses.Contains(canonical, StringComparer.OrdinalIgnoreCase) ||
@@ -499,6 +500,14 @@ internal static class GripEngine
             ctx.FlagValue = last.FlagValue;
         }
         LastKnown[ctx.Scope] = ctx;
+        // A structural match is not proof that these are vanilla grip keys.
+        // For the new client, keep observations in memory only. Do not
+        // create a protected "Original" from a speculative method mapping.
+        if (_renewedCurrent)
+        {
+            Status = "Spades: six candidate grip keys observed (read-only)";
+            return;
+        }
         // Never label the freshly submitted values as a pre-install
         // "Original" if the first observable read happens DURING submit.
         if (!_submitting)
@@ -616,6 +625,11 @@ internal static class GripEngine
         // necessarily the user's original grip from before installation!
         KnownFlags[snapshot.Scope] = (_submitFlag, _submitFlagValue);
         LastKnown[snapshot.Scope] = snapshot;
+        if (_renewedCurrent)
+        {
+            Status = "Spades: candidate adjustment write observed (read-only)";
+            return; // No local preset files or PlayerPrefs changed by this mod.
+        }
         // Classes without a pre-existing adjustment should remain usable.
         // This is labelled FIRST CAPTURED, never falsely "Imported Original".
         if (!PresetStore.HasOriginal(snapshot.Scope))
@@ -631,6 +645,9 @@ internal static class GripEngine
     internal static bool TryCurrent(out GripSnapshot snapshot)
     {
         snapshot = new GripSnapshot();
+        // Don't turn a candidate key capture into an exportable "verified"
+        // preset until native reader/apply semantics have been confirmed.
+        if (_renewedCurrent) return false;
         if (!_installed || !TryContext(out _, out GripSnapshot ctx) ||
             !LastKnown.TryGetValue(ctx.Scope, out GripSnapshot? cached)) return false;
         if (cached.Keys.Length != 6 || !cached.Keys.All(PlayerPrefs.HasKey)) return false;
@@ -646,6 +663,8 @@ internal static class GripEngine
 
     internal static string SaveNamed(string name)
     {
+        if (_renewedCurrent)
+            return "Saving new Spades presets is paused until the native grip mapping is verified. Existing presets are safe.";
         if (!TryCurrent(out GripSnapshot snapshot)) return "No verified current grip available yet.";
         if (!PresetStore.HasOriginal(snapshot.Scope))
             return "Original grip not yet backed up. Change class/reopen Settings to import first.";
