@@ -46,7 +46,8 @@ internal static class Program
         try
         {
             using var stream = File.OpenRead(dll);
-            string interopHash = Convert.ToHexString(SHA256.HashData(stream));
+            using var hasher = SHA256.Create();
+            string interopHash = Convert.ToHexString(hasher.ComputeHash(stream));
             stream.Position = 0;
             using var pe = new PEReader(stream);
             if (!pe.HasMetadata)
