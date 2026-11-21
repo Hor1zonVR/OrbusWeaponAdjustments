@@ -30,6 +30,16 @@ internal static class NativeAdjustmentTrace
     private static int _dropped;
     private static bool _installed;
     private static bool _failureLogged;
+    private static string _lastMismatch = "";
+
+    private static void ReportMismatch(string stage)
+    {
+        // Only field/method names and expected types. Never user values or keys.
+        if (_lastMismatch == stage) return;
+        _lastMismatch = stage;
+        Plugin.ModLog.LogWarning("[WeaponAdjustments/Methods] Compatibility check failed: " +
+            stage + ". Hooks remain OFF; retrying safely.");
+    }
 
     internal static bool IsArmed => _armed;
     internal static bool HooksInstalled => _installed;
@@ -69,27 +79,27 @@ internal static class NativeAdjustmentTrace
         return DataMemberType(type, name) == expected;
     }
 
-    private static bool VerifyObfuscated(Type adjuster, Type menu)
+    private static string? VerifyObfuscated(Type adjuster, Type menu)
     {
-        // Derived from matching all four Community WeaponAdjuster field
-        // offsets/types AND its ordered method signatures to Renewed cmi.
-        // Fail CLOSED if the game changes class layout in a future update.
-        return typeof(MonoBehaviour).IsAssignableFrom(adjuster) &&
-               Field(adjuster, "bhje", typeof(float)) &&
-               Field(adjuster, "bhjf", typeof(bool)) &&
-               DataMemberType(adjuster, "bhjc")?.Name == "my" &&
-               DataMemberType(adjuster, "bhjd")?.Name == "cle" &&
-               DataMemberType(menu, "sew") != null;
+        // Retain the exact original compatibility checks; report which failed.
+        if (!typeof(MonoBehaviour).IsAssignableFrom(adjuster)) return "renewed-adjuster-base";
+        if (!Field(adjuster, "bhje", typeof(float))) return "renewed-field-bhje-float";
+        if (!Field(adjuster, "bhjf", typeof(bool))) return "renewed-field-bhjf-bool";
+        if (DataMemberType(adjuster, "bhjc")?.Name != "my") return "renewed-field-bhjc-my";
+        if (DataMemberType(adjuster, "bhjd")?.Name != "cle") return "renewed-field-bhjd-cle";
+        if (DataMemberType(menu, "sew") == null) return "renewed-menu-sew";
+        return null;
     }
 
-    private static bool VerifyCommunity(Type adjuster, Type menu)
+    private static string? VerifyCommunity(Type adjuster, Type menu)
     {
-        return typeof(MonoBehaviour).IsAssignableFrom(adjuster) &&
-               Field(adjuster, "timeUntilDeath", typeof(float)) &&
-               Field(adjuster, "isGripped", typeof(bool)) &&
-               DataMemberType(adjuster, "pi")?.Name == "PhysicsInteractable" &&
-               DataMemberType(adjuster, "toolController")?.Name == "ToolController" &&
-               DataMemberType(menu, "document") != null;
+        if (!typeof(MonoBehaviour).IsAssignableFrom(adjuster)) return "community-adjuster-base";
+        if (!Field(adjuster, "timeUntilDeath", typeof(float))) return "community-timeUntilDeath-float";
+        if (!Field(adjuster, "isGripped", typeof(bool))) return "community-isGripped-bool";
+        if (DataMemberType(adjuster, "pi")?.Name != "PhysicsInteractable") return "community-pi-type";
+        if (DataMemberType(adjuster, "toolController")?.Name != "ToolController") return "community-toolController-type";
+        if (DataMemberType(menu, "document") == null) return "community-menu-document";
+        return null;
     }
 
     internal static void Install()
@@ -104,23 +114,23 @@ internal static class NativeAdjustmentTrace
         // No ClassAnalyzer-style broad scene scan. Only exact method hooks.
         Type? adjuster = FindType("cmi");
         Type? menu = FindType("ng");
-        bool renewed = adjuster != null && menu != null &&
-                       VerifyObfuscated(adjuster, menu);
+        bool renewed = adjuster != null && menu != null;
+        string? mismatch = renewed ? VerifyObfuscated(adjuster!, menu!) : null;
         if (!renewed)
         {
             adjuster = FindType("MagicalActual.WeaponAdjuster");
             menu = FindType("PlayerMenu");
-            if (adjuster == null || menu == null || !VerifyCommunity(adjuster, menu))
+            if (adjuster == null || menu == null)
             {
-                if (!_failureLogged)
-                {
-                    _failureLogged = true;
-                    Plugin.ModLog.LogWarning(
-                        "[WeaponAdjustments/Methods] Known Community/Renewed types not ready" +
-                        " or fingerprint mismatch. Hooks remain OFF; retrying safely.");
-                }
+                ReportMismatch("expected-types-missing-renewed-cmi-ng-and-community");
                 return;
             }
+            mismatch = VerifyCommunity(adjuster, menu);
+        }
+        if (mismatch != null)
+        {
+            ReportMismatch(mismatch);
+            return;
         }
 
         // Explicit guard also assures the nullable analyser after the
@@ -138,17 +148,20 @@ internal static class NativeAdjustmentTrace
         MethodInfo? ungrippedMethod = Method(adjuster, ungripped, 0);
         MethodInfo? toggleMethod = Method(menu, toggle, 1);
         MethodInfo? resetMethod = Method(menu, reset, 1);
-        if (submitMethod == null || grippedMethod == null || ungrippedMethod == null ||
-            toggleMethod == null || resetMethod == null ||
-            !toggleMethod.IsStatic || !resetMethod.IsStatic ||
-            submitMethod.IsStatic || grippedMethod.IsStatic || ungrippedMethod.IsStatic)
+        string? methodMismatch =
+            submitMethod == null ? "missing-submit-method" :
+            grippedMethod == null ? "missing-gripped-method" :
+            ungrippedMethod == null ? "missing-ungripped-method" :
+            toggleMethod == null ? "missing-menu-toggle-method" :
+            resetMethod == null ? "missing-menu-reset-method" :
+            !toggleMethod.IsStatic ? "menu-toggle-not-static" :
+            !resetMethod.IsStatic ? "menu-reset-not-static" :
+            submitMethod.IsStatic ? "submit-unexpectedly-static" :
+            grippedMethod.IsStatic ? "gripped-unexpectedly-static" :
+            ungrippedMethod.IsStatic ? "ungripped-unexpectedly-static" : null;
+        if (methodMismatch != null)
         {
-            if (!_failureLogged)
-            {
-                _failureLogged = true;
-                Plugin.ModLog.LogWarning(
-                    "[WeaponAdjustments/Methods] Signature mismatch; hooks OFF.");
-            }
+            ReportMismatch(methodMismatch);
             return;
         }
 
@@ -162,6 +175,7 @@ internal static class NativeAdjustmentTrace
             Patch(ungrippedMethod, null, nameof(UngrippedAfter));
             _installed = true;
             _failureLogged = false;
+            _lastMismatch = "";
             Plugin.ModLog.LogInfo("[WeaponAdjustments/Methods] READ-ONLY hooks installed: " +
                 menu.FullName + "." + toggle + "/" + reset + ", " +
                 adjuster.FullName + "." + submit + "/" + gripped + "/" + ungripped +
