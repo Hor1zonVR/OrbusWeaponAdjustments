@@ -43,19 +43,32 @@ try {
     if ([string]::IsNullOrWhiteSpace($GameDir)) {
         $base = Join-Path $env:LOCALAPPDATA 'OrbusRebornModdingInstances'
         if (!(Test-Path $base)) { throw "No RM instances found: $base" }
-        $dirs = @(Get-ChildItem -LiteralPath $base -Directory)
+        # Exclude internal RebornManager rollback/backup directories: they may
+        # carry stale generated interop and are not runnable game instances.
+        $dirs = @(Get-ChildItem -LiteralPath $base -Directory | Where-Object {
+            $_.Name -notmatch '^(\.|.*(?:rollback|backup|staging|temporary))'
+        })
         $ordered = @()
         foreach ($name in @('My Orbus Renewed','Modded Orbus')) {
             $ordered += @($dirs | Where-Object { $_.Name -eq $name })
         }
         $ordered += @($dirs | Where-Object { $_.Name -notin @('My Orbus Renewed','Modded Orbus') })
         $candidate = $ordered | Where-Object {
-            Test-Path (Join-Path $_.FullName 'BepInEx\interop\UnityEngine.InputModule.dll')
+            (Test-Path (Join-Path $_.FullName 'BepInEx\interop\UnityEngine.InputModule.dll')) -and
+            ((Test-Path (Join-Path $_.FullName 'OrbusVR.exe')) -or
+             (Test-Path (Join-Path $_.FullName 'Orbus.exe')) -or
+             (Test-Path (Join-Path $_.FullName 'OrbusVR_Data')))
         } | Select-Object -First 1
-        if ($null -eq $candidate) { throw "No instance has BepInEx generated interop. Launch an RM instance once or supply -GameDir." }
+        if ($null -eq $candidate) {
+            $available = if ($dirs.Count) { ($dirs.Name -join ', ') } else { '(none)' }
+            throw "No active game instance with generated interop found. Visible instance folders: $available. Launch a working RM instance once or specify -GameDir explicitly."
+        }
         $GameDir = $candidate.FullName
     }
     $GameDir = [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($GameDir.Trim().Trim('"')))
+    if ((Split-Path -Leaf $GameDir) -match '^(\.|.*(?:rollback|backup|staging|temporary))') {
+        throw "Refusing to build against a RebornManager rollback or backup folder: $GameDir. Supply an active game instance."
+    }
     foreach ($file in @(
         'BepInEx\core\BepInEx.Core.dll',
         'BepInEx\core\BepInEx.Unity.IL2CPP.dll',
