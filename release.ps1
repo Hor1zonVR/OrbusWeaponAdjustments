@@ -22,7 +22,7 @@ try {
     Write-Host ''
     Write-Host '====================================================' -ForegroundColor Cyan
     Write-Host ' OrbusWeaponAdjustments -> GitHub Releases -> RM' -ForegroundColor Cyan
-    Write-Host ' v0.3.0 offline share codes and safe Imported N presets' -ForegroundColor Yellow
+    Write-Host ' v0.3.1 diagnostic candidate: safe native grip bridge checks' -ForegroundColor Yellow
     Write-Host '====================================================' -ForegroundColor Cyan
     Write-Host ''
 
@@ -133,7 +133,7 @@ try {
         CheckExit 'Checking existing GitHub release tags'
         $releaseExists = $publishedTags -contains $tag
         if (-not $releaseExists) {
-            $notes = 'v0.3.0 adds OFFLINE, exact-float grip share codes with one-click Windows clipboard Copy/Paste, class/controller preview and Confirm Import as Imported N without applying. Portable imports store no sender PlayerPrefs keys, preserve schema-1 originals and backups, and use local native keys only at Load. No RebornMenu update or manual DLL install needed. First live test: verify copying, cross-class import, rename and Load/Undo.'
+            $notes = 'v0.3.1 adds precise, metadata-only stage diagnostics for fail-closed native grip and method hook verification; no preference writes or preset data formats changed. Includes v0.3.0 offline share codes (not yet live-verified). Please test the bridge on Renewed/Spades, capture the stage code from LogOutput, and verify no existing presets were modified.'
             $commit = (& git rev-parse HEAD).Trim()
             CheckExit 'Reading source commit'
             $maxAttempts = 4
@@ -157,7 +157,7 @@ try {
                 if ($listOkay) {
                     Write-Host "Publishing $tag (attempt $attempt/$maxAttempts)..." -ForegroundColor Cyan
                     try {
-                        & gh release create $tag $dll --repo $repo --target $commit --title "OrbusWeaponAdjustments $tag - Offline Share Codes" --notes $notes
+                        & gh release create $tag $dll --repo $repo --target $commit --title "OrbusWeaponAdjustments $tag - Bridge Diagnostics Test" --notes $notes
                         if ($LASTEXITCODE -eq 0) {
                             $releaseExists = $true
                             break
