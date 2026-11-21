@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
+using System.Security.Cryptography;
 using System.Text;
 
 // Read-only, OFFLINE inspection of the BepInEx-generated managed interop.
@@ -17,7 +18,9 @@ internal static class Program
         "MagicalActual.PlayerAvatar",
         "MagicalActual.PlayerCharacter",
         "MagicalActual.PlayerClass",
-        "PlayerMenu"
+        "PlayerMenu",
+        // Candidates found in the Nov 21 Renewed interop, NOT verified mappings.
+        "com", "ciu"
     };
 
     private sealed record Member(string Name, string Type);
@@ -54,12 +57,19 @@ internal static class Program
             report.AppendLine("ORBUS WEAPON INTEROP AUDIT — READ ONLY");
             report.AppendLine("Assembly: " + Path.GetFileName(dll));
             report.AppendLine("Types in assembly: " + reader.TypeDefinitions.Count);
+            report.AppendLine("Interop last modified (UTC): " + File.GetLastWriteTimeUtc(dll).ToString("O"));
+            stream.Position = 0;
+            report.AppendLine("Interop SHA-256: " + Convert.ToHexString(SHA256.HashData(stream)));
+            report.AppendLine("IMPORTANT: This audit reads GENERATED interop. After a Spades update,");
+            report.AppendLine("ensure BepInEx has regenerated it for that exact game build.");
             report.AppendLine("No game state or preference values inspected.");
             report.AppendLine();
 
             var known = new Dictionary<string, ExaminedType>(StringComparer.Ordinal);
             var weaponCandidates = new List<ExaminedType>();
             var rigCandidates = new List<ExaminedType>();
+            var menuCandidates = new List<ExaminedType>();
+            var avatarCandidates = new List<ExaminedType>();
 
             foreach (TypeDefinitionHandle handle in reader.TypeDefinitions)
             {
@@ -79,14 +89,23 @@ internal static class Program
                     new[] { "Vector3", "Vector3", "Quaternion",
                         "Vector3", "Vector3", "Vector3", "Vector3",
                         "Vector3", "Vector3", "Boolean" });
-                if (!named && !weaponShape && !rigShape) continue;
+                bool menuShape = data.Any(m =>
+                    m.Type.Contains("Dom.Document", StringComparison.OrdinalIgnoreCase) ||
+                    m.Type.Contains("HtmlDocument", StringComparison.OrdinalIgnoreCase) ||
+                    m.Type.Contains("PowerUI.Document", StringComparison.OrdinalIgnoreCase));
+                // Community and earlier Renewed avatar progression fields:
+                // xp, neededxp, supercharge, active flag. Pure hypothesis.
+                bool avatarShape = HasShape(data,
+                    new[] { "Int32", "Int32", "UInt16", "Boolean" });
+                if (!named && !weaponShape && !rigShape && !menuShape && !avatarShape) continue;
 
                 var entry = new ExaminedType(full, TypeName(reader, td.BaseType),
-                    data, td.GetMethods().Select(m =>
-                        reader.GetString(reader.GetMethodDefinition(m).Name)).ToList());
+                    data, td.GetMethods().Select(m => MethodSummary(reader, m)).ToList());
                 if (named) known[full] = entry;
                 if (weaponShape) weaponCandidates.Add(entry);
                 if (rigShape) rigCandidates.Add(entry);
+                if (menuShape) menuCandidates.Add(entry);
+                if (avatarShape) avatarCandidates.Add(entry);
             }
 
             report.AppendLine("=== EXPECTED CLASS NAMES ===");
@@ -112,7 +131,21 @@ internal static class Program
             report.AppendLine("Looking for the ten consecutive expected native member types.");
             report.AppendLine("Candidates: " + rigCandidates.Count);
             foreach (var t in rigCandidates.Take(25))
-                WriteType(report, t, maxMethods: 18, maxData: 16);
+                WriteType(report, t, maxMethods: 22, maxData: 16);
+
+            report.AppendLine();
+            report.AppendLine("=== POWERUI DOCUMENT OWNER CANDIDATES ===");
+            report.AppendLine("Native menu candidates containing document-like properties.");
+            report.AppendLine("Candidates: " + menuCandidates.Count);
+            foreach (var t in menuCandidates.Take(25))
+                WriteType(report, t, maxMethods: 38, maxData: 30);
+
+            report.AppendLine();
+            report.AppendLine("=== PLAYER AVATAR PROGRESSION SHAPES ===");
+            report.AppendLine("Possible xp, needed-xp, supercharge, active-field progression quartet.");
+            report.AppendLine("Candidates: " + avatarCandidates.Count);
+            foreach (var t in avatarCandidates.Take(25))
+                WriteType(report, t, maxMethods: 32, maxData: 32);
 
             report.AppendLine();
             report.AppendLine("Candidates are ONLY hypotheses; do not activate hooks or preset writes");
@@ -125,12 +158,35 @@ internal static class Program
             Console.WriteLine("Saved report: " + reportPath);
             Console.WriteLine("Potential weapon-shaped types: " + weaponCandidates.Count);
             Console.WriteLine("Potential rig-shaped types: " + rigCandidates.Count);
+            Console.WriteLine("Potential document-owner types: " + menuCandidates.Count);
+            Console.WriteLine("Potential avatar-progression types: " + avatarCandidates.Count);
             return 0;
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine("Audit failed (" + ex.GetType().Name + "): " + ex.Message);
             return 1;
+        }
+    }
+
+
+    private static string MethodSummary(MetadataReader r, MethodDefinitionHandle handle)
+    {
+        MethodDefinition method = r.GetMethodDefinition(handle);
+        string name = r.GetString(method.Name);
+        string kind = (method.Attributes & MethodAttributes.Static) != 0 ? "static" : "instance";
+        try
+        {
+            BlobReader reader = r.GetBlobReader(method.Signature);
+            byte header = reader.ReadByte();
+            if ((header & 0x10) != 0) reader.ReadCompressedInteger(); // generic arity
+            int count = reader.ReadCompressedInteger();
+            string result = ReadSignatureType(r, ref reader);
+            return name + "[args=" + count + ",ret=" + result + "," + kind + "]";
+        }
+        catch
+        {
+            return name + "[" + kind + ",signature-unavailable]";
         }
     }
 
@@ -222,6 +278,7 @@ internal static class Program
         int code = b.ReadByte();
         return code switch
         {
+            0x01 => "Void",
             0x02 => "Boolean",
             0x03 => "Char",
             0x04 => "SByte",
