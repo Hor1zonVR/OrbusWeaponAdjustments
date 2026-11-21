@@ -72,3 +72,9 @@ jobs:
               $briefText -match 'TYPE localPlayer') {
               throw "Concise audit included the wrong types or broad sections."
           }
+
+      - name: Validate changed Weapon Adjustments plugin source syntax
+        shell: pwsh
+        run: |
+          dotnet run --project tools/SourceSyntaxCheck/SourceSyntaxCheck.csproj -c Release -- src/OrbusWeaponAdjustments
+          if ($LASTEXITCODE -ne 0) { throw 'Weapon Adjustments source syntax check failed.' }
