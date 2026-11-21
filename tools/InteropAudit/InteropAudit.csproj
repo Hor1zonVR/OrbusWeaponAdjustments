@@ -5,4 +5,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- Nested synthetic fixtures are a separate test project, not part of
+         the runtime audit. Exclude their source and generated obj files. -->
+    <Compile Remove="Tests/**/*.cs" />
+  </ItemGroup>
 </Project>
