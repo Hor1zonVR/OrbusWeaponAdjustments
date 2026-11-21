@@ -46,6 +46,8 @@ internal static class Program
         try
         {
             using var stream = File.OpenRead(dll);
+            string interopHash = Convert.ToHexString(SHA256.HashData(stream));
+            stream.Position = 0;
             using var pe = new PEReader(stream);
             if (!pe.HasMetadata)
             {
@@ -58,8 +60,7 @@ internal static class Program
             report.AppendLine("Assembly: " + Path.GetFileName(dll));
             report.AppendLine("Types in assembly: " + reader.TypeDefinitions.Count);
             report.AppendLine("Interop last modified (UTC): " + File.GetLastWriteTimeUtc(dll).ToString("O"));
-            stream.Position = 0;
-            report.AppendLine("Interop SHA-256: " + Convert.ToHexString(SHA256.HashData(stream)));
+            report.AppendLine("Interop SHA-256: " + interopHash);
             report.AppendLine("IMPORTANT: This audit reads GENERATED interop. After a Spades update,");
             report.AppendLine("ensure BepInEx has regenerated it for that exact game build.");
             report.AppendLine("No game state or preference values inspected.");
