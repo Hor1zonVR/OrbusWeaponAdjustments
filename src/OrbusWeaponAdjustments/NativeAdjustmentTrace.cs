@@ -111,6 +111,67 @@ internal static class NativeAdjustmentTrace
             return;
         }
 
+        // A fully separate, STRICT read-only trace for the 21-Nov Spades
+        // mapping. Method roles are NOT confirmed, so we log candidates
+        // rather than claiming vanilla submit/grip or patching unknown UI.
+        // PlayerPrefs hooks are observer-only and capture no key names.
+        Type? newAdjuster = FindType("cpc");
+        Type? newRig = FindType("cjj");
+        Type? newAvatar = FindType("ceb");
+        if (newAdjuster != null && newRig != null && newAvatar != null &&
+            typeof(MonoBehaviour).IsAssignableFrom(newAdjuster))
+        {
+            string? shapeError =
+                DataMemberType(newAdjuster, "bjcb")?.Name != "nn"
+                    ? "spades-adjuster-physics-field" :
+                DataMemberType(newAdjuster, "bjcc")?.Name != "cnw"
+                    ? "spades-adjuster-controller-field" :
+                !Field(newAdjuster, "bjcd", typeof(float))
+                    ? "spades-adjuster-timer-field" :
+                !Field(newAdjuster, "bjce", typeof(bool))
+                    ? "spades-adjuster-gripped-field" :
+                !typeof(MonoBehaviour).IsAssignableFrom(newRig) ||
+                !Field(newRig, "bhlh", typeof(Vector3)) ||
+                !Field(newRig, "bhlj", typeof(Quaternion)) ||
+                !Field(newRig, "bhlq", typeof(bool))
+                    ? "spades-rig-layout" : null;
+            if (shapeError != null) { ReportMismatch(shapeError); return; }
+
+            MethodInfo? candidate1 = Method(newAdjuster, "ngd", 0);
+            MethodInfo? candidate2 = Method(newAdjuster, "nge", 0);
+            MethodInfo? candidate3 = Method(newAdjuster, "ngf", 0);
+            if (candidate1 == null || candidate2 == null || candidate3 == null ||
+                candidate1.IsStatic || candidate2.IsStatic || candidate3.IsStatic ||
+                !newAdjuster.GetMethods(Own).Any(m => m.Name == "Start") ||
+                !newAdjuster.GetMethods(Own).Any(m => m.Name == "Update"))
+            {
+                ReportMismatch("spades-adjuster-method-signature");
+                return;
+            }
+
+            try
+            {
+                _harmony = new Harmony(HarmonyId);
+                Patch(candidate1, nameof(CandidateSubmitBefore), nameof(CandidateSubmitAfter));
+                Patch(candidate2, null, nameof(CandidateGrip2After));
+                Patch(candidate3, null, nameof(CandidateGrip3After));
+                _installed = true;
+                _lastMismatch = "";
+                Plugin.ModLog.LogInfo(
+                    "[WeaponAdjustments/Methods] Spades experimental READ-ONLY " +
+                    "candidate hooks: cpc.ngd/nge/ngf. " +
+                    "NO player preference writes, no menu hooks, no grip apply. " +
+                    "Ctrl+Alt+P to compare call order during native adjustment.");
+            }
+            catch (Exception ex)
+            {
+                try { _harmony?.UnpatchSelf(); } catch { }
+                _installed = false;
+                ReportMismatch("spades-trace-hook-" + ex.GetType().Name);
+            }
+            return;
+        }
+
         // No ClassAnalyzer-style broad scene scan. Only exact method hooks.
         Type? adjuster = FindType("cmi");
         Type? menu = FindType("ng");
@@ -309,8 +370,18 @@ internal static class NativeAdjustmentTrace
             if (instance is not Component c || c == null) return "instance=(unavailable)";
             Transform t = c.transform;
             string parent = t.parent != null ? PathOf(t.parent) : "(scene root)";
-            string gripField = instance.GetType().Name == "cmi" ? "bhjf" : "isGripped";
-            string timerField = instance.GetType().Name == "cmi" ? "bhje" : "timeUntilDeath";
+            string gripField = instance.GetType().Name switch
+            {
+                "cpc" => "bjce",
+                "cmi" => "bhjf",
+                _ => "isGripped"
+            };
+            string timerField = instance.GetType().Name switch
+            {
+                "cpc" => "bjcd",
+                "cmi" => "bhje",
+                _ => "timeUntilDeath"
+            };
             return "class=" + instance.GetType().FullName +
                 " obj=" + PathOf(t) + " parent=" + parent +
                 " grip=" + SmallField(instance, gripField) +
@@ -331,6 +402,25 @@ internal static class NativeAdjustmentTrace
 
     // Harmony prefix/postfix signatures must never return false or write to
     // __result: the vanilla Orbus methods remain completely unmodified.
+    // The Nov-2026 method names are signature-correlated candidates only.
+    // The game's own calls and submit-scoped preference observations will
+    // establish which candidate actually saves the weapon adjustment.
+    private static void CandidateSubmitBefore(object __instance)
+    {
+        Record("SPADES.CANDIDATE_1 cpc.ngd BEFORE", __instance);
+        PersistenceProbe.BeginSubmission();
+    }
+    private static void CandidateSubmitAfter(object __instance)
+    {
+        PersistenceProbe.EndSubmission();
+        Record("SPADES.CANDIDATE_1 cpc.ngd AFTER", __instance);
+        PersistenceProbe.MarkSubmitted(__instance);
+    }
+    private static void CandidateGrip2After(object __instance) =>
+        Record("SPADES.CANDIDATE_2 cpc.nge AFTER", __instance);
+    private static void CandidateGrip3After(object __instance) =>
+        Record("SPADES.CANDIDATE_3 cpc.ngf AFTER", __instance);
+
     private static void MenuToggleBefore() => Record("MENU.ToggleAdjustWeapon BEFORE");
     private static void MenuToggleAfter() => Record("MENU.ToggleAdjustWeapon AFTER");
     private static void MenuResetBefore() => Record("MENU.ResetAdjustWeapon BEFORE");
