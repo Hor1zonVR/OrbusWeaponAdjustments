@@ -1,0 +1,25 @@
+name: Validate Orbus interop audit
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-audit:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Compile offline metadata analyzer
+        shell: pwsh
+        run: |
+          dotnet build tools/InteropAudit/InteropAudit.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { throw 'InteropAudit build failed.' }
