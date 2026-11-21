@@ -1,5 +1,11 @@
 # OrbusWeaponAdjustments
 
+## v0.3.1 — native bridge diagnosis (source candidate)
+
+The installed v0.2.5 log reported `Native grip bridge not ready`, while the read-only method hooks reported a generic type/fingerprint mismatch. v0.3.1 keeps every existing fail-closed validation check, but reports *which* class, field, method or local-character structural check fails, without logging player IDs, PlayerPrefs keys or grip values. **This source change is not a confirmed compatibility fix.** Live validation on the target Renewed/Spades client is still required.
+
+**Safe test:** copy `%LOCALAPPDATA%\OrbusWeaponAdjustments\Presets\v1` to a separate backup folder first. In the existing repository clone run `git pull origin main`, then `.\release.ps1 -BuildOnly` to compile against your installed interop. Do not overwrite an existing working client DLL with an untested build. Once the compiler succeeds, publish using the existing release workflow and update through RebornManager. In a fresh in-game log, search for `[WeaponAdjustments/Presets] Bridge check failed:` and `[WeaponAdjustments/Methods] Compatibility check failed:`; share those stage codes to identify a precise mapping issue. No preset loading should be enabled until the bridge passes verification.
+
 Standalone BepInEx IL2CPP plugin for OrbusVR. **v0.3.0 adds offline share codes and one-click clipboard Import/Share to the dedicated RebornMenu Mods page.** Imports are automatically named Imported 1, Imported 2, etc., under the correct class. Existing named presets, original backups, recovery Trash, native Adjust Weapon Grip and the on-page VR naming keyboard are preserved. Vanilla General Settings is untouched.
 
 **First-test warning:** v0.3.0's Win32 clipboard and portable-keyless imports need their first live Spades test. The preset manager is under Settings → Mods → WeaponAdjustments. Importing never automatically loads or overwrites a grip, and Load remains locked until the recipient's native adjustment keys and enabled flag have been verified. Don't Reset a valuable grip before its Original backup appears.
