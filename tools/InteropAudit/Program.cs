@@ -29,11 +29,14 @@ internal static class Program
 
     private static int Main(string[] args)
     {
-        if (args.Length != 1 && (args.Length != 3 || args[1] != "--focus"))
+        if (args.Length != 1 &&
+            (args.Length != 3 ||
+             (args[1] != "--focus" && args[1] != "--only")))
         {
-            Console.Error.WriteLine("Usage: dotnet run --project tools/InteropAudit -- \"FULL_GAME_DIRECTORY\" [--focus \"cpc,cjj,ceb,ip,oa\"]");
+            Console.Error.WriteLine("Usage: dotnet run --project tools/InteropAudit -- \"FULL_GAME_DIRECTORY\" [--focus or --only \"cac,cxe,cnw\"]");
             return 2;
         }
+        bool only = args.Length == 3 && args[1] == "--only";
         string[] requestedFocus = args.Length == 3
             ? args[2].Split(',', StringSplitOptions.RemoveEmptyEntries |
                                  StringSplitOptions.TrimEntries)
@@ -142,6 +145,8 @@ internal static class Program
                     strongRigs.Add(entry);
             }
 
+            if (!only)
+            {
             report.AppendLine("=== EXPECTED CLASS NAMES ===");
             foreach (string name in KnownTypes)
             {
@@ -212,13 +217,17 @@ internal static class Program
             }
 
             report.AppendLine();
+            }
+
             report.AppendLine("=== COMPLETE FOCUSED STRUCTURAL TYPE MAP ===");
             report.AppendLine("This is full METADATA (no player values), including");
             report.AppendLine("all fields/properties and all non-accessor methods.");
             var focus = new HashSet<string>(requestedFocus, StringComparer.Ordinal);
             // These selectors do not depend on the obfuscated type names.
-            foreach (var t in strongAdjusters.Concat(strongRigs).Concat(avatarCandidates))
-                focus.Add(t.Name);
+            if (!only)
+            {
+                foreach (var t in strongAdjusters.Concat(strongRigs).Concat(avatarCandidates))
+                    focus.Add(t.Name);
             // Owners of an Avatar that are MonoBehaviours, especially a
             // PlayerCharacter-like singleton with PowerUI components.
             foreach (var avatar in avatarCandidates)
@@ -235,6 +244,7 @@ internal static class Program
                 t.Methods.Count(m => m.Contains("PowerUI.UIEvent",
                     StringComparison.Ordinal)) >= 25))
                 focus.Add(candidate.Name);
+            }
             report.AppendLine("Selected: " + string.Join(", ", focus.OrderBy(x => x)));
             foreach (string name in focus.OrderBy(x => x, StringComparer.Ordinal))
             {

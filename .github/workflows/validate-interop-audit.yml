@@ -58,3 +58,17 @@ jobs:
               $full -notmatch 'NON-ACCESSOR METHODS') {
               throw "Focused audit did not include complete type metadata."
           }
+
+
+          # Concise mode must include requested class metadata and exclude the
+          # broad previous audit so renamed targets are easy to review.
+          $brief = @(dotnet run --project tools/InteropAudit/InteropAudit.csproj -c Release -- $game --only "com,ciu")
+          if ($LASTEXITCODE -ne 0) { throw "Concise interop audit failed." }
+          $briefPath = ($brief | Where-Object { $_ -like 'Saved report: *' } | Select-Object -Last 1) -replace '^Saved report: ', ''
+          $briefText = Get-Content -LiteralPath $briefPath -Raw
+          if ($briefText -notmatch 'TYPE com : UnityEngine.MonoBehaviour' -or
+              $briefText -notmatch 'TYPE ciu : UnityEngine.MonoBehaviour' -or
+              $briefText -match 'POSSIBLE WEAPON ADJUSTER SHAPES' -or
+              $briefText -match 'TYPE localPlayer') {
+              throw "Concise audit included the wrong types or broad sections."
+          }
