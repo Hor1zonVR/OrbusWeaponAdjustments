@@ -429,11 +429,36 @@ internal static class Program
             0x0e => "String",
             0x11 => TypeFromCodedIndex(r, b.ReadCompressedInteger()),
             0x12 => "class " + TypeFromCodedIndex(r, b.ReadCompressedInteger()),
+            0x15 => ReadGenericInstance(r, ref b),
             0x1d => ReadSignatureType(r, ref b) + "[]",
             0x10 => "byref " + ReadSignatureType(r, ref b),
             0x0f => "ptr " + ReadSignatureType(r, ref b),
+            0x1c => "Object",
+            0x18 => "IntPtr",
+            0x19 => "UIntPtr",
+            0x13 => "!" + b.ReadCompressedInteger(),
+            0x1e => "!!" + b.ReadCompressedInteger(),
             _ => "element-0x" + code.ToString("x2")
         };
+    }
+
+    private static string ReadGenericInstance(MetadataReader r, ref BlobReader b)
+    {
+        // ELEMENT_TYPE_GENERICINST(0x15), followed by CLASS or VALUETYPE,
+        // then a TypeDefOrRef coded index and its argument type list.
+        // This exposes Il2CppReferenceArray<T> and class collections which
+        // are important for mapping active classes after obfuscation.
+        if (b.RemainingBytes == 0) return "generic-empty";
+        byte kind = b.ReadByte();
+        if (kind is not (0x11 or 0x12)) return "generic-unknown-kind";
+        string definition = TypeFromCodedIndex(r, b.ReadCompressedInteger());
+        int count = b.ReadCompressedInteger();
+        if (count < 0 || count > 24) return "generic-invalid-arity";
+        var args = new List<string>(count);
+        for (int i = 0; i < count; i++)
+            args.Add(ReadSignatureType(r, ref b));
+        return (kind == 0x12 ? "class " : "") +
+               definition + "<" + string.Join(",", args) + ">";
     }
 
     private static string TypeFromCodedIndex(MetadataReader r, int coded)
