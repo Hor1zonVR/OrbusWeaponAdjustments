@@ -47,3 +47,14 @@ jobs:
               $report -notmatch 'localPlayer.avatar:class plausibleAvatar') {
               throw "Audit omitted synthetic class relationships."
           }
+          $focused = @(dotnet run --project tools/InteropAudit/InteropAudit.csproj -c Release -- $game --focus "com,ciu,plausibleAvatar,localPlayer")
+          if ($LASTEXITCODE -ne 0) { throw "Focused interop audit failed." }
+          $focusedPath = ($focused | Where-Object { $_ -like 'Saved report: *' } | Select-Object -Last 1) -replace '^Saved report: ', ''
+          $full = Get-Content -LiteralPath $focusedPath -Raw
+          if ($full -notmatch '=== COMPLETE FOCUSED STRUCTURAL TYPE MAP ===' -or
+              $full -notmatch 'TYPE plausibleAvatar' -or
+              $full -notmatch 'TYPE localPlayer' -or
+              $full -notmatch 'FIELDS/PROPERTIES' -or
+              $full -notmatch 'NON-ACCESSOR METHODS') {
+              throw "Focused audit did not include complete type metadata."
+          }
