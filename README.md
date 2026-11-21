@@ -1,5 +1,20 @@
 # OrbusWeaponAdjustments
 
+## November 21 — current Renewed client interop audit
+
+A real v0.3.1 log confirms that `cmi` no longer passes the expected Unity MonoBehaviour inheritance check, while `cgr` was not found. The bridge's old edition detection then fell back to Community class names. **Do not bypass either safety validation or reset an existing grip.** We need the current generated interop metadata before we can fix the mappings.
+
+An **offline, read-only** audit is now included in `tools/InteropAudit`. It reads only the managed type metadata of your locally generated `BepInEx/interop/Assembly-CSharp.dll`; it does not load the game, modify files, read player preferences, or send network requests.
+
+After `git pull origin main` run:
+
+```powershell
+$gameDir = Join-Path $env:LOCALAPPDATA 'OrbusRebornModdingInstances\My Orbus Renewed 2'
+dotnet run --project .\tools\InteropAudit\InteropAudit.csproj -c Release -- "$gameDir"
+```
+
+The tool reports actual `cmi`/`cgr`/other legacy names and prints possible structural matches for the weapon and rig types. The generated `OrbusWeaponInteropAudit_*.txt` report is saved in your Windows TEMP directory; attach that report for review. **Candidates are not automatically trusted.** We will verify any proposed replacement signatures against the current game before allowing hooks or preset writes again. This audit is intended to avoid repeated public test releases and in-headset diagnostics.
+
 ## v0.3.1 — native bridge diagnosis (source candidate)
 
 The installed v0.2.5 log reported `Native grip bridge not ready`, while the read-only method hooks reported a generic type/fingerprint mismatch. v0.3.1 keeps every existing fail-closed validation check, but reports *which* class, field, method or local-character structural check fails, without logging player IDs, PlayerPrefs keys or grip values. **This source change is not a confirmed compatibility fix.** Live validation on the target Renewed/Spades client is still required.
