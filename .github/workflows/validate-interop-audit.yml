@@ -34,8 +34,9 @@ jobs:
           dotnet build tools/InteropAudit/Tests/FakeInterop.csproj -c Release -o $interop
           if ($LASTEXITCODE -ne 0) { throw "Synthetic interop build failed." }
           $out = @(dotnet run --project tools/InteropAudit/InteropAudit.csproj -c Release -- $game)
-          if ($LASTEXITCODE -ne 0) { throw "Interop audit failed." }
+          $exit = $LASTEXITCODE
           $out | ForEach-Object { Write-Host $_ }
+          if ($exit -ne 0) { throw "Interop audit failed (exit $exit)." }
           if (!($out -match "Strong adjuster candidates: 1")) { throw "Weapon candidate detection regressed." }
           if (!($out -match "Strong rig candidates: 1")) { throw "Rig candidate detection regressed." }
           $reportPath = ($out | Where-Object { $_ -like 'Saved report: *' } | Select-Object -Last 1) -replace '^Saved report: ', ''
