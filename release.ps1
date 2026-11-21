@@ -22,7 +22,7 @@ try {
     Write-Host ''
     Write-Host '====================================================' -ForegroundColor Cyan
     Write-Host ' OrbusWeaponAdjustments -> GitHub Releases -> RM' -ForegroundColor Cyan
-    Write-Host ' v0.3.1 diagnostic candidate: safe native grip bridge checks' -ForegroundColor Yellow
+    Write-Host ' v0.3.2 read-only Spades compatibility candidate' -ForegroundColor Yellow
     Write-Host '====================================================' -ForegroundColor Cyan
     Write-Host ''
 
@@ -146,7 +146,7 @@ try {
         CheckExit 'Checking existing GitHub release tags'
         $releaseExists = $publishedTags -contains $tag
         if (-not $releaseExists) {
-            $notes = 'v0.3.1 adds precise, metadata-only stage diagnostics for fail-closed native grip and method hook verification; no preference writes or preset data formats changed. Includes v0.3.0 offline share codes (not yet live-verified). Please test the bridge on Renewed/Spades, capture the stage code from LogOutput, and verify no existing presets were modified.'
+            $notes = 'v0.3.2 restores the Nov-2026 Spades class layout for read-only grip observation and candidate method trace. Loading/Undo remain locked on this client until the vanilla apply method is verified. No preset data formats or storage paths changed. Please test on the exact target client and send the diagnostics before enabling preset writes.'
             $commit = (& git rev-parse HEAD).Trim()
             CheckExit 'Reading source commit'
             $maxAttempts = 4
@@ -170,7 +170,7 @@ try {
                 if ($listOkay) {
                     Write-Host "Publishing $tag (attempt $attempt/$maxAttempts)..." -ForegroundColor Cyan
                     try {
-                        & gh release create $tag $dll --repo $repo --target $commit --title "OrbusWeaponAdjustments $tag - Bridge Diagnostics Test" --notes $notes
+                        & gh release create $tag $dll --repo $repo --target $commit --title "OrbusWeaponAdjustments $tag - Read-Only Spades Bridge Test" --notes $notes
                         if ($LASTEXITCODE -eq 0) {
                             $releaseExists = $true
                             break
