@@ -29,9 +29,20 @@ internal static class Program
 
     private static int Main(string[] args)
     {
-        if (args.Length != 1)
+        if (args.Length != 1 && (args.Length != 3 || args[1] != "--focus"))
         {
-            Console.Error.WriteLine("Usage: dotnet run --project tools/InteropAudit -- \"FULL_GAME_DIRECTORY\"");
+            Console.Error.WriteLine("Usage: dotnet run --project tools/InteropAudit -- \"FULL_GAME_DIRECTORY\" [--focus \"cpc,cjj,ceb,ip,oa\"]");
+            return 2;
+        }
+        string[] requestedFocus = args.Length == 3
+            ? args[2].Split(',', StringSplitOptions.RemoveEmptyEntries |
+                                 StringSplitOptions.TrimEntries)
+            : Array.Empty<string>();
+        if (requestedFocus.Length > 20 || requestedFocus.Any(n =>
+                n.Length == 0 || n.Length > 90 ||
+                n.Any(c => !(char.IsLetterOrDigit(c) || c is '_' or '.' or '+' or '`'))))
+        {
+            Console.Error.WriteLine("Invalid focus list: up to 20 type identifiers.");
             return 2;
         }
 
@@ -201,6 +212,45 @@ internal static class Program
             }
 
             report.AppendLine();
+            report.AppendLine("=== COMPLETE FOCUSED STRUCTURAL TYPE MAP ===");
+            report.AppendLine("This is full METADATA (no player values), including");
+            report.AppendLine("all fields/properties and all non-accessor methods.");
+            var focus = new HashSet<string>(requestedFocus, StringComparer.Ordinal);
+            // These selectors do not depend on the obfuscated type names.
+            foreach (var t in strongAdjusters.Concat(strongRigs).Concat(avatarCandidates))
+                focus.Add(t.Name);
+            // Owners of an Avatar that are MonoBehaviours, especially a
+            // PlayerCharacter-like singleton with PowerUI components.
+            foreach (var avatar in avatarCandidates)
+            {
+                foreach (var owner in allTypes.Where(t =>
+                    t.BaseType == "UnityEngine.MonoBehaviour" &&
+                    t.Data.Any(m => m.Type == "class " + avatar.Name ||
+                                    m.Type == avatar.Name)))
+                    focus.Add(owner.Name);
+            }
+            // Among multiple UI owners, favour a large interface controller
+            // with a document field and dozens of UIEvent handlers.
+            foreach (var candidate in menuCandidates.Where(t =>
+                t.Methods.Count(m => m.Contains("PowerUI.UIEvent",
+                    StringComparison.Ordinal)) >= 25))
+                focus.Add(candidate.Name);
+            report.AppendLine("Selected: " + string.Join(", ", focus.OrderBy(x => x)));
+            foreach (string name in focus.OrderBy(x => x, StringComparer.Ordinal))
+            {
+                var match = allTypes.FirstOrDefault(t => t.Name == name);
+                if (match == null)
+                {
+                    report.AppendLine(name + " — not present");
+                    continue;
+                }
+                WriteDetailedType(report, match);
+                // Candidate player/class fields may point to other obfuscated
+                // classes. Show their type metadata next if further research
+                // indicates their roles; do NOT infer field meaning from a name.
+            }
+
+            report.AppendLine();
             report.AppendLine("Candidates are ONLY hypotheses; do not activate hooks or preset writes");
             report.AppendLine("until mappings are independently verified against the current client.");
 
@@ -247,6 +297,25 @@ internal static class Program
         {
             return name + "[" + kind + ",signature-unavailable]";
         }
+    }
+
+    private static void WriteDetailedType(StringBuilder sb, ExaminedType t)
+    {
+        sb.AppendLine("TYPE " + t.Name + " : " + t.BaseType);
+        sb.AppendLine("FIELDS/PROPERTIES (" + t.Data.Count + ") — in metadata order:");
+        for (int i = 0; i < t.Data.Count; i++)
+            sb.AppendLine("  #" + i.ToString("D3") + " " +
+                          t.Data[i].Name + " : " + t.Data[i].Type);
+        var gameplay = t.Methods.Where(x =>
+            !x.StartsWith("get_", StringComparison.Ordinal) &&
+            !x.StartsWith("set_", StringComparison.Ordinal) &&
+            !x.StartsWith(".ctor[", StringComparison.Ordinal) &&
+            !x.StartsWith(".cctor[", StringComparison.Ordinal)).ToList();
+        sb.AppendLine("NON-ACCESSOR METHODS (" + gameplay.Count +
+                      ") — in metadata order:");
+        for (int i = 0; i < gameplay.Count; i++)
+            sb.AppendLine("  #" + i.ToString("D3") + " " + gameplay[i]);
+        sb.AppendLine();
     }
 
     private static void WriteType(StringBuilder sb, ExaminedType t,
