@@ -27,6 +27,24 @@ The second user-supplied report (4,050 lines) is from the **same SHA-256 build**
 
 **Remaining offline gaps:** full `cac`, `cxe`, `cnw` metadata; source-function identity for `ceb` controller getter, vanilla rig refresh, and `cpc.ngd` submit. Existing preset writing must remain disabled until fully verified.
 
+## v0.3.2 experimental read-only compatibility branch
+
+The v0.3.2 candidate adds an explicit new-Spades mapping, active **only if** the rig's bhlh/bhlj/bhlq types match the Nov-2026 shape. Old CE and legacy Renewed branches are retained.
+
+- `cpc`: native adjuster (`bjcb:nn`, `bjcc:cnw`, `bjcd:float`, `bjce:bool`), candidate event methods `ngd`, `nge`, `ngf`.
+- `cjj`: rig, ten exact members `bhlh..bhlq`; `mol()`/`mom()` are candidate reader methods.
+- `cgv.lwn():cgv` → `cgv.bgma:ceb` → `ceb.bgac:cac` → `cac.bekb:string` is the local player/class name chain **hypothesis**. `ceb.bgbl:string` is the playerDbId candidate.
+- `ceb.lqc():string` and immediately following `ceb.lqd():void` have the same adjacency/signatures as the old controller getter and rig refresh. **Their semantics are not proven. Never use `lqd` to apply a grip in this release.**
+- `oa.tbz:PowerUI.HtmlDocument` is a structural UI owner, without guessing obfuscated menu click-handler names.
+- `cxe` is a data record with `ExtUI.InventoryItemMeta` and many integers, **not PlayerClass**; `ceb.bgab` is a dictionary of these records, **not the prior classObjects collection**. `cac` is a much stronger class-component candidate because it's actually the `ceb.bgac` property type and has `bekb:string`.
+- `cnw` is a MonoBehaviour with eight UnityEvents, controller references and grip click handlers — matches the weapon tool-controller role structurally.
+
+### Safety of the candidate
+
+The new client remains **read-only**. `GripEngine.Load`, `Undo`, `SaveNamed`, offline imports, old-grip auto-import and all `PlayerPrefs` writing paths are disabled for this client; no guessed `lqd` apply method is ever invoked. The Harmony traces can observe `cpc.ngd/nge/ngf` and the normal preference API; no preference keys/identifiers are written to log. CE and older Renewed versions retain their separate existing behavior.
+
+This is not a user-facing fix for preset loading. It is the minimum safe in-game test of the corrected metadata mapping, to verify real vanilla `SubmitAdjust`, `getControllerType`, rig reader and apply behavior. **Do not publish as a stable functional preset-loading release until those signals are confirmed.**
+
 ## Native method guesses — not safe to hook for writes
 
 - `cpc.ngd()`, `nge()`, `ngf()`: likely submit/grip/ungrip in order because previous WeaponAdjuster had five nonconstructor methods including Start/Update. **No function-body cross-check yet**.
