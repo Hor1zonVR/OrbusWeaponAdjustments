@@ -52,6 +52,17 @@ internal static class GripEngine
     internal static string LastMessage { get; private set; } = "";
     internal static string ContextStatus { get; private set; } = "Waiting for local character";
     private static string _lastContextLog = "";
+    private static string _lastBridgeFailure = "";
+
+    private static void BridgeUnavailable(string stage)
+    {
+        // Metadata-only stage codes: never reveal PlayerPrefs keys or identities.
+        Status = "Native grip bridge unavailable (" + stage + ")";
+        if (_lastBridgeFailure == stage) return;
+        _lastBridgeFailure = stage;
+        Plugin.ModLog.LogWarning("[WeaponAdjustments/Presets] Bridge check failed: " +
+            stage + ". Presets are locked; no game preferences modified.");
+    }
     private static bool ContextUnavailable(string reason)
     {
         ContextStatus = reason;
@@ -101,8 +112,9 @@ internal static class GripEngine
             m.Name == name && m.GetParameters().Length == count);
     }
 
-    private static bool VerifiedRig(Type t, bool renewed)
+    private static bool VerifiedRig(Type t, bool renewed, out string mismatch)
     {
+        mismatch = "";
         string[] names = renewed
             ? new[] { "bfsl", "bfsm", "bfsn", "bfso", "bfsp", "bfsq", "bfsr", "bfss", "bfst", "bfsu" }
             : new[] { "rotationAdjustmentTouch", "positionAdjustmentTouch", "finalQuaternionTouch",
@@ -118,7 +130,12 @@ internal static class GripEngine
         for (int i = 0; i < names.Length; i++)
         {
             Type? actual = MemberType(t, names[i]);
-            if (actual != types[i]) return false;
+            if (actual != types[i])
+            {
+                mismatch = "rig-field-" + names[i] + "-expected-" +
+                    types[i].Name + "-got-" + (actual?.Name ?? "missing");
+                return false;
+            }
         }
         return true;
     }
@@ -135,10 +152,23 @@ internal static class GripEngine
             Type? prefs = Find("UnityEngine.PlayerPrefs");
             Type? player = Find(renewed ? "ceh" : "MagicalActual.PlayerCharacter");
             Type? cls = Find(renewed ? "cei" : "MagicalActual.PlayerClass");
-            if (_rigType == null || _avatarType == null || _menuType == null ||
-                player == null || cls == null || prefs == null ||
-                !VerifiedRig(_rigType, renewed))
+            string? missingType =
+                _rigType == null ? "missing-rig-type" :
+                _avatarType == null ? "missing-avatar-type" :
+                _menuType == null ? "missing-menu-type" :
+                player == null ? "missing-player-type" :
+                cls == null ? "missing-class-type" :
+                prefs == null ? "missing-playerprefs-type" : null;
+            if (missingType != null)
+            {
+                BridgeUnavailable(missingType + (renewed ? "-renewed" : "-community"));
                 return;
+            }
+            if (!VerifiedRig(_rigType!, renewed, out string rigMismatch))
+            {
+                BridgeUnavailable(rigMismatch);
+                return;
+            }
 
             string apply = renewed ? "kxt" : "MakeRigBasedAdjustments";
             string controller = renewed ? "kxs" : "getControllerType";
@@ -168,24 +198,43 @@ internal static class GripEngine
                 m.GetParameters().Length == 2 &&
                 m.GetParameters()[0].ParameterType == typeof(string) &&
                 m.GetParameters()[1].ParameterType == typeof(int));
-            if (_apply == null || _getController == null || getRotation == null ||
-                getPosition == null || getFloat == null || setFloat == null ||
-                setInt == null || getInt == null || resetRig == null ||
-                submit == null || submit.ReturnType != typeof(void) ||
-                submit.IsStatic || submit.GetParameters().Length != 0 ||
-                resetRig.ReturnType != typeof(void) ||
-                _apply.ReturnType != typeof(void) ||
-                _getController.ReturnType != typeof(string) ||
-                getRotation.ReturnType != typeof(Vector3) ||
-                getPosition.ReturnType != typeof(Vector3))
+            string? methodFailure =
+                _apply == null ? "missing-avatar-apply" :
+                _getController == null ? "missing-controller-getter" :
+                getRotation == null ? "missing-rig-rotation-getter" :
+                getPosition == null ? "missing-rig-position-getter" :
+                getFloat == null ? "missing-playerprefs-getfloat" :
+                setFloat == null ? "missing-playerprefs-setfloat" :
+                setInt == null ? "missing-playerprefs-setint" :
+                getInt == null ? "missing-playerprefs-getint" :
+                resetRig == null ? "missing-rig-reset" :
+                submit == null ? "missing-weapon-submit" :
+                submit.ReturnType != typeof(void) || submit.IsStatic ||
+                    submit.GetParameters().Length != 0 ? "invalid-weapon-submit-signature" :
+                resetRig.ReturnType != typeof(void) ? "invalid-rig-reset-signature" :
+                _apply.ReturnType != typeof(void) ? "invalid-avatar-apply-signature" :
+                _getController.ReturnType != typeof(string) ? "invalid-controller-getter-signature" :
+                getRotation.ReturnType != typeof(Vector3) ? "invalid-rotation-getter-signature" :
+                getPosition.ReturnType != typeof(Vector3) ? "invalid-position-getter-signature" : null;
+            if (methodFailure != null)
+            {
+                BridgeUnavailable(methodFailure);
                 return;
+            }
             // Validate the known local-character chain before allowing hooks.
-            if (renewed &&
-                (MemberType(player, "betm") != _avatarType ||
-                 MemberType(_avatarType, "becm") != cls ||
-                 MemberType(cls, "bfav") != typeof(string) ||
-                 MemberType(_menuType, "seu") != typeof(string)))
-                return;
+            if (renewed)
+            {
+                string? characterFailure =
+                    MemberType(player!, "betm") != _avatarType ? "player-avatar-link" :
+                    MemberType(_avatarType!, "becm") != cls ? "avatar-activeclass-link" :
+                    MemberType(cls!, "bfav") != typeof(string) ? "class-name-type" :
+                    MemberType(_menuType!, "seu") != typeof(string) ? "menu-character-field" : null;
+                if (characterFailure != null)
+                {
+                    BridgeUnavailable("invalid-" + characterFailure);
+                    return;
+                }
+            }
 
             _harmony = new Harmony("com.horizon.orbus.weaponadjustments.presets");
             HarmonyMethod H(string name) => new(typeof(GripEngine).GetMethod(name, Flags)!);
@@ -201,6 +250,7 @@ internal static class GripEngine
             _harmony.Patch(setFloat, prefix: H(nameof(ObserveSetFloat)));
             _harmony.Patch(setInt, prefix: H(nameof(ObserveSetInt)));
             _installed = true;
+            _lastBridgeFailure = "";
             Status = "Preset bridge ready; awaiting saved grip read";
             Plugin.ModLog.LogInfo("[WeaponAdjustments/Presets] Native grip reader/write hooks installed (" +
                 (renewed ? "Renewed/Spades" : "Community") + "), no values modified.");
@@ -229,7 +279,9 @@ internal static class GripEngine
         avatar = null;
         snapshot = new GripSnapshot();
         if (!_installed || _avatarType == null)
-            return ContextUnavailable("Native grip bridge not ready");
+            return ContextUnavailable(_lastBridgeFailure.Length == 0
+                ? "Native grip bridge not ready"
+                : "Native bridge check: " + _lastBridgeFailure);
         try
         {
             bool renewed = _avatarType.Name == "cbn";
