@@ -61,6 +61,14 @@ internal static class Program
             report.AppendLine("Types in assembly: " + reader.TypeDefinitions.Count);
             report.AppendLine("Interop last modified (UTC): " + File.GetLastWriteTimeUtc(dll).ToString("O"));
             report.AppendLine("Interop SHA-256: " + interopHash);
+            string gameBinary = Path.Combine(args[0], "GameAssembly.dll");
+            if (File.Exists(gameBinary))
+            {
+                var gameInfo = new FileInfo(gameBinary);
+                report.AppendLine("GameAssembly.dll length: " + gameInfo.Length);
+                report.AppendLine("GameAssembly.dll modified (UTC): " +
+                    gameInfo.LastWriteTimeUtc.ToString("O"));
+            }
             report.AppendLine("IMPORTANT: This audit reads GENERATED interop. After a Spades update,");
             report.AppendLine("ensure BepInEx has regenerated it for that exact game build.");
             report.AppendLine("No game state or preference values inspected.");
@@ -71,6 +79,9 @@ internal static class Program
             var rigCandidates = new List<ExaminedType>();
             var menuCandidates = new List<ExaminedType>();
             var avatarCandidates = new List<ExaminedType>();
+            var allTypes = new List<ExaminedType>();
+            var strongAdjusters = new List<ExaminedType>();
+            var strongRigs = new List<ExaminedType>();
 
             foreach (TypeDefinitionHandle handle in reader.TypeDefinitions)
             {
@@ -79,10 +90,6 @@ internal static class Program
                 // Property accessors in generated Il2CppInterop code usually represent
                 // native fields, so inspect properties as well as ordinary fields.
                 bool named = KnownTypes.Contains(full, StringComparer.Ordinal);
-                bool plausible = named || td.GetProperties().Count() >= 4 ||
-                                 td.GetFields().Count() >= 4;
-                if (!plausible) continue;
-
                 List<Member> data = GetData(reader, td);
                 bool weaponShape = HasShape(data,
                     new[] { "REF", "REF", "Single", "Boolean" });
@@ -97,16 +104,30 @@ internal static class Program
                 // Community and earlier Renewed avatar progression fields:
                 // xp, neededxp, supercharge, active flag. Pure hypothesis.
                 bool avatarShape = HasShape(data,
-                    new[] { "Int32", "Int32", "UInt16", "Boolean" });
-                if (!named && !weaponShape && !rigShape && !menuShape && !avatarShape) continue;
-
+                    new[] { "Int32", "Int32", "UInt16", "Boolean" }) ||
+                    HasShape(data, new[] { "Boolean", "GameObject", "GameObject",
+                        "GameObject", "GameObject", "Transform", "Transform" });
+                // Keep the full class index so we can show which player classes
+                // reference the candidates, without executing any game code.
                 var entry = new ExaminedType(full, TypeName(reader, td.BaseType),
                     data, td.GetMethods().Select(m => MethodSummary(reader, m)).ToList());
+                allTypes.Add(entry);
                 if (named) known[full] = entry;
                 if (weaponShape) weaponCandidates.Add(entry);
                 if (rigShape) rigCandidates.Add(entry);
                 if (menuShape) menuCandidates.Add(entry);
                 if (avatarShape) avatarCandidates.Add(entry);
+                bool isBehaviour = entry.BaseType == "UnityEngine.MonoBehaviour";
+                bool hasStartUpdate = entry.Methods.Any(m => m.StartsWith("Start[",
+                    StringComparison.Ordinal)) &&
+                    entry.Methods.Any(m => m.StartsWith("Update[",
+                        StringComparison.Ordinal));
+                if (isBehaviour && data.Count == 4 && weaponShape && hasStartUpdate)
+                    strongAdjusters.Add(entry);
+                if (isBehaviour && data.Count == 10 && rigShape &&
+                    entry.Methods.Any(m => m.StartsWith("Reset[",
+                        StringComparison.Ordinal)))
+                    strongRigs.Add(entry);
             }
 
             report.AppendLine("=== EXPECTED CLASS NAMES ===");
@@ -121,32 +142,62 @@ internal static class Program
             }
 
             report.AppendLine();
+            report.AppendLine("=== STRONG STRUCTURAL CANDIDATES (STILL NOT VERIFIED) ===");
+            report.AppendLine("Weapon adjuster: MonoBehaviour, EXACT four fields with two");
+            report.AppendLine("references + float + bool, and Start/Update. Count: " +
+                strongAdjusters.Count);
+            foreach (var t in strongAdjusters.Take(20))
+                WriteType(report, t, maxMethods: 70, maxData: 70);
+            report.AppendLine("Rig adjustment: MonoBehaviour, EXACT ten-field shape");
+            report.AppendLine("including Quaternion + bool and Reset. Count: " +
+                strongRigs.Count);
+            foreach (var t in strongRigs.Take(20))
+                WriteType(report, t, maxMethods: 70, maxData: 70);
+            report.AppendLine();
             report.AppendLine("=== POSSIBLE WEAPON ADJUSTER SHAPES (NOT VERIFIED) ===");
             report.AppendLine("Looking for two adjacent reference-like members, Single, Boolean.");
             report.AppendLine("Candidates: " + weaponCandidates.Count);
-            foreach (var t in weaponCandidates.Take(40))
-                WriteType(report, t, maxMethods: 12, maxData: 12);
+            foreach (var t in weaponCandidates.Take(60))
+                WriteType(report, t, maxMethods: 40, maxData: 35);
 
             report.AppendLine();
             report.AppendLine("=== POSSIBLE RIG-ADJUSTMENT SHAPES (NOT VERIFIED) ===");
             report.AppendLine("Looking for the ten consecutive expected native member types.");
             report.AppendLine("Candidates: " + rigCandidates.Count);
-            foreach (var t in rigCandidates.Take(25))
-                WriteType(report, t, maxMethods: 22, maxData: 16);
+            foreach (var t in rigCandidates.Take(50))
+                WriteType(report, t, maxMethods: 60, maxData: 30);
 
             report.AppendLine();
             report.AppendLine("=== POWERUI DOCUMENT OWNER CANDIDATES ===");
             report.AppendLine("Native menu candidates containing document-like properties.");
             report.AppendLine("Candidates: " + menuCandidates.Count);
-            foreach (var t in menuCandidates.Take(25))
-                WriteType(report, t, maxMethods: 38, maxData: 30);
+            foreach (var t in menuCandidates.Take(80))
+                WriteType(report, t, maxMethods: 90, maxData: 80);
 
             report.AppendLine();
             report.AppendLine("=== PLAYER AVATAR PROGRESSION SHAPES ===");
             report.AppendLine("Possible xp, needed-xp, supercharge, active-field progression quartet.");
             report.AppendLine("Candidates: " + avatarCandidates.Count);
-            foreach (var t in avatarCandidates.Take(25))
-                WriteType(report, t, maxMethods: 32, maxData: 32);
+            foreach (var t in avatarCandidates.Take(80))
+                WriteType(report, t, maxMethods: 80, maxData: 90);
+
+            report.AppendLine();
+            report.AppendLine("=== REFERENCES TO HIGH-CONFIDENCE CANDIDATES ===");
+            report.AppendLine("Find owners of candidate objects to map PlayerAvatar /");
+            report.AppendLine("PlayerCharacter / active class relationships.");
+            foreach (var candidate in strongAdjusters.Concat(strongRigs)
+                .Concat(menuCandidates.Take(10)).Concat(avatarCandidates.Take(20))
+                .DistinctBy(x => x.Name).Take(45))
+            {
+                var owners = allTypes.SelectMany(t => t.Data
+                    .Where(m => m.Type == "class " + candidate.Name ||
+                                m.Type == candidate.Name)
+                    .Select(m => t.Name + "." + m.Name + ":" + m.Type))
+                    .Take(50).ToArray();
+                if (owners.Length == 0) continue;
+                report.AppendLine(candidate.Name + " referenced by (" + owners.Length +
+                    " displayed): " + string.Join("; ", owners));
+            }
 
             report.AppendLine();
             report.AppendLine("Candidates are ONLY hypotheses; do not activate hooks or preset writes");
@@ -157,6 +208,8 @@ internal static class Program
             File.WriteAllText(reportPath, report.ToString(), new UTF8Encoding(false));
             Console.WriteLine("Read-only audit completed.");
             Console.WriteLine("Saved report: " + reportPath);
+            Console.WriteLine("Strong adjuster candidates: " + strongAdjusters.Count);
+            Console.WriteLine("Strong rig candidates: " + strongRigs.Count);
             Console.WriteLine("Potential weapon-shaped types: " + weaponCandidates.Count);
             Console.WriteLine("Potential rig-shaped types: " + rigCandidates.Count);
             Console.WriteLine("Potential document-owner types: " + menuCandidates.Count);
@@ -183,7 +236,11 @@ internal static class Program
             if ((header & 0x10) != 0) reader.ReadCompressedInteger(); // generic arity
             int count = reader.ReadCompressedInteger();
             string result = ReadSignatureType(r, ref reader);
-            return name + "[args=" + count + ",ret=" + result + "," + kind + "]";
+            var parameters = new List<string>();
+            for (int i = 0; i < count && i < 40; i++)
+                parameters.Add(ReadSignatureType(r, ref reader));
+            return name + "[args=" + count + ",types=(" +
+                string.Join("|", parameters) + "),ret=" + result + "," + kind + "]";
         }
         catch
         {
@@ -197,9 +254,16 @@ internal static class Program
         sb.AppendLine(t.Name + " : " + t.BaseType);
         sb.AppendLine("  Members (" + t.Data.Count + "): " +
             string.Join("; ", t.Data.Take(maxData).Select(x => x.Name + ":" + x.Type)));
-        sb.AppendLine("  Methods (" + t.Methods.Count + "): " +
-            string.Join(", ", t.Methods.Take(maxMethods)));
-        if (t.Data.Count > maxData || t.Methods.Count > maxMethods)
+        // Accessor methods are already represented by Data. Hiding them
+        // keeps the actual native gameplay callbacks readable in reports.
+        var useful = t.Methods.Where(x =>
+            !x.StartsWith("get_", StringComparison.Ordinal) &&
+            !x.StartsWith("set_", StringComparison.Ordinal) &&
+            !x.StartsWith(".ctor[", StringComparison.Ordinal) &&
+            !x.StartsWith(".cctor[", StringComparison.Ordinal)).ToList();
+        sb.AppendLine("  Gameplay methods (" + useful.Count + "): " +
+            string.Join(", ", useful.Take(maxMethods)));
+        if (t.Data.Count > maxData || useful.Count > maxMethods)
             sb.AppendLine("  (output truncated for this class)");
     }
 
