@@ -32,6 +32,10 @@ internal static class GripEngine
     private static readonly Dictionary<string, GripSnapshot> LastKnown = new();
     private static Harmony? _harmony;
     private static bool _installed;
+    // Distinguish the November 2026 Spades build from the older obfuscated
+    // client. Never assume the mere existence of cgr/cbn indicates edition.
+    private static bool _renewedCurrent;
+    private static bool _renewedLegacy;
     private static Type? _avatarType, _rigType, _menuType;
     private static MethodInfo? _apply, _getController;
     private static int _reading = -1, _readCount;
@@ -77,7 +81,8 @@ internal static class GripEngine
     }
 
     private static string CharacterId(object? avatar, bool renewed) =>
-        Member(avatar, renewed ? "beix" : "playerDbId") as string ?? "";
+        Member(avatar, _renewedCurrent ? "bgbl" :
+            renewed ? "beix" : "playerDbId") as string ?? "";
 
     private static Type? Find(string name)
     {
@@ -115,7 +120,9 @@ internal static class GripEngine
     private static bool VerifiedRig(Type t, bool renewed, out string mismatch)
     {
         mismatch = "";
-        string[] names = renewed
+        string[] names = _renewedCurrent
+            ? new[] { "bhlh", "bhli", "bhlj", "bhlk", "bhll", "bhlm", "bhln", "bhlo", "bhlp", "bhlq" }
+            : renewed
             ? new[] { "bfsl", "bfsm", "bfsn", "bfso", "bfsp", "bfsq", "bfsr", "bfss", "bfst", "bfsu" }
             : new[] { "rotationAdjustmentTouch", "positionAdjustmentTouch", "finalQuaternionTouch",
                       "rotationAdjustmentSteam", "positionAdjustmentSteam",
@@ -145,13 +152,31 @@ internal static class GripEngine
         if (_installed) return;
         try
         {
-            bool renewed = Find("cgr") != null;
-            _rigType = Find(renewed ? "cgr" : "MagicalActual.RigBasedAdjustment");
-            _avatarType = Find(renewed ? "cbn" : "MagicalActual.PlayerAvatar");
-            _menuType = Find(renewed ? "ng" : "PlayerMenu");
+            // New Spades: map only the exact known metadata shape, not a
+            // short obfuscated name alone. Old CE/Renewed branches are left
+            // intact for users who have not updated.
+            Type? currentRig = Find("cjj");
+            _renewedCurrent = currentRig != null &&
+                MemberType(currentRig, "bhlh") == typeof(Vector3) &&
+                MemberType(currentRig, "bhlj") == typeof(Quaternion) &&
+                MemberType(currentRig, "bhlq") == typeof(bool);
+            Type? legacyRig = Find("cgr");
+            _renewedLegacy = !_renewedCurrent && legacyRig != null &&
+                MemberType(legacyRig, "bfsl") == typeof(Vector3) &&
+                MemberType(legacyRig, "bfsn") == typeof(Quaternion) &&
+                MemberType(legacyRig, "bfsu") == typeof(bool);
+            bool renewed = _renewedCurrent || _renewedLegacy;
+            _rigType = Find(_renewedCurrent ? "cjj" :
+                _renewedLegacy ? "cgr" : "MagicalActual.RigBasedAdjustment");
+            _avatarType = Find(_renewedCurrent ? "ceb" :
+                _renewedLegacy ? "cbn" : "MagicalActual.PlayerAvatar");
+            _menuType = Find(_renewedCurrent ? "oa" :
+                _renewedLegacy ? "ng" : "PlayerMenu");
             Type? prefs = Find("UnityEngine.PlayerPrefs");
-            Type? player = Find(renewed ? "ceh" : "MagicalActual.PlayerCharacter");
-            Type? cls = Find(renewed ? "cei" : "MagicalActual.PlayerClass");
+            Type? player = Find(_renewedCurrent ? "cgv" :
+                _renewedLegacy ? "ceh" : "MagicalActual.PlayerCharacter");
+            Type? cls = Find(_renewedCurrent ? "cac" :
+                _renewedLegacy ? "cei" : "MagicalActual.PlayerClass");
             string? missingType =
                 _rigType == null ? "missing-rig-type" :
                 _avatarType == null ? "missing-avatar-type" :
@@ -170,17 +195,26 @@ internal static class GripEngine
                 return;
             }
 
-            string apply = renewed ? "kxt" : "MakeRigBasedAdjustments";
-            string controller = renewed ? "kxs" : "getControllerType";
-            string rotation = renewed ? "lvo" : "getPlayerAdjustRotation";
-            string position = renewed ? "lvp" : "getPlayerAdjustPosition";
+            // These new names are a structural hypothesis from this
+            // particular Spades client. The observed getter/refresh pair
+            // must be confirmed in-game before enabling any preset writes.
+            string apply = _renewedCurrent ? "lqd" :
+                renewed ? "kxt" : "MakeRigBasedAdjustments";
+            string controller = _renewedCurrent ? "lqc" :
+                renewed ? "kxs" : "getControllerType";
+            string rotation = _renewedCurrent ? "mol" :
+                renewed ? "lvo" : "getPlayerAdjustRotation";
+            string position = _renewedCurrent ? "mom" :
+                renewed ? "lvp" : "getPlayerAdjustPosition";
             _apply = Method(_avatarType, apply, 0);
             _getController = Method(_avatarType, controller, 0);
             MethodInfo? getRotation = Method(_rigType, rotation, 0);
             MethodInfo? getPosition = Method(_rigType, position, 0);
-            Type? adjuster = Find(renewed ? "cmi" : "MagicalActual.WeaponAdjuster");
+            Type? adjuster = Find(_renewedCurrent ? "cpc" :
+                renewed ? "cmi" : "MagicalActual.WeaponAdjuster");
             MethodInfo? submit = adjuster == null ? null :
-                Method(adjuster, renewed ? "mnh" : "SubmitAdjust", 0);
+                Method(adjuster, _renewedCurrent ? "ngd" :
+                    renewed ? "mnh" : "SubmitAdjust", 0);
             MethodInfo? resetRig = Method(_rigType, "Reset", 0);
             MethodInfo? getInt = prefs.GetMethods(Flags).SingleOrDefault(m =>
                 m.Name == "GetInt" && m.IsStatic && m.ReturnType == typeof(int) &&
@@ -224,11 +258,22 @@ internal static class GripEngine
             // Validate the known local-character chain before allowing hooks.
             if (renewed)
             {
-                string? characterFailure =
-                    MemberType(player!, "betm") != _avatarType ? "player-avatar-link" :
-                    MemberType(_avatarType!, "becm") != cls ? "avatar-activeclass-link" :
-                    MemberType(cls!, "bfav") != typeof(string) ? "class-name-type" :
-                    MemberType(_menuType!, "seu") != typeof(string) ? "menu-character-field" : null;
+                string? characterFailure = _renewedCurrent
+                    ? (MemberType(player!, "bgma") != _avatarType ? "player-avatar-link" :
+                       MemberType(_avatarType!, "bgac") != cls ? "avatar-activeclass-link" :
+                       MemberType(cls!, "bekb") != typeof(string) ? "class-name-type" :
+                       MemberType(_avatarType!, "bgbl") != typeof(string) ? "character-id-type" :
+                       MemberType(_menuType!, "tbz")?.FullName != "PowerUI.HtmlDocument"
+                           ? "menu-document-type" :
+                       MemberType(adjuster!, "bjcb")?.Name != "nn" ||
+                       MemberType(adjuster!, "bjcc")?.Name != "cnw" ||
+                       MemberType(adjuster!, "bjcd") != typeof(float) ||
+                       MemberType(adjuster!, "bjce") != typeof(bool)
+                           ? "adjuster-layout" : null)
+                    : (MemberType(player!, "betm") != _avatarType ? "player-avatar-link" :
+                       MemberType(_avatarType!, "becm") != cls ? "avatar-activeclass-link" :
+                       MemberType(cls!, "bfav") != typeof(string) ? "class-name-type" :
+                       MemberType(_menuType!, "seu") != typeof(string) ? "menu-character-field" : null);
                 if (characterFailure != null)
                 {
                     BridgeUnavailable("invalid-" + characterFailure);
@@ -251,9 +296,13 @@ internal static class GripEngine
             _harmony.Patch(setInt, prefix: H(nameof(ObserveSetInt)));
             _installed = true;
             _lastBridgeFailure = "";
-            Status = "Preset bridge ready; awaiting saved grip read";
-            Plugin.ModLog.LogInfo("[WeaponAdjustments/Presets] Native grip reader/write hooks installed (" +
-                (renewed ? "Renewed/Spades" : "Community") + "), no values modified.");
+            Status = _renewedCurrent
+                ? "Spades: read-only mapping test; preset loading is locked"
+                : "Preset bridge ready; awaiting saved grip read";
+            Plugin.ModLog.LogInfo("[WeaponAdjustments/Presets] Native grip observation hooks installed (" +
+                (_renewedCurrent ? "Spades Nov-2026 READ ONLY" :
+                 renewed ? "Renewed/Spades" : "Community") +
+                "), no game preferences modified.");
         }
         catch (Exception ex)
         {
@@ -284,18 +333,24 @@ internal static class GripEngine
                 : "Native bridge check: " + _lastBridgeFailure);
         try
         {
-            bool renewed = _avatarType.Name == "cbn";
-            Type? playerType = Find(renewed ? "ceh" : "MagicalActual.PlayerCharacter");
+            bool renewed = _renewedCurrent || _renewedLegacy;
+            Type? playerType = Find(_renewedCurrent ? "cgv" :
+                renewed ? "ceh" : "MagicalActual.PlayerCharacter");
             if (playerType == null) return ContextUnavailable("PlayerCharacter type unavailable");
-            object? pc = Member(playerType, renewed ? "blfr" : "Instance");
-            if (pc == null)
+            object? pc = _renewedCurrent
+                ? Method(playerType, "lwn", 0)?.Invoke(null, null)
+                : Member(playerType, renewed ? "blfr" : "Instance");
+            if (pc == null && !_renewedCurrent)
                 pc = Method(playerType, renewed ? "led" : "get_Instance", 0)?.Invoke(null, null);
             if (pc == null) return ContextUnavailable("Local player not initialized");
-            avatar = Member(pc, renewed ? "betm" : "myPlayerAvatar");
+            avatar = Member(pc, _renewedCurrent ? "bgma" :
+                renewed ? "betm" : "myPlayerAvatar");
             if (avatar == null) return ContextUnavailable("Local player avatar not initialized");
-            object? active = Member(avatar, renewed ? "becm" : "currentActiveClass");
+            object? active = Member(avatar, _renewedCurrent ? "bgac" :
+                renewed ? "becm" : "currentActiveClass");
             if (active == null) return ContextUnavailable("No active class selected");
-            string className = Member(active, renewed ? "bfav" : "className") as string ?? "";
+            string className = Member(active, _renewedCurrent ? "bekb" :
+                renewed ? "bfav" : "className") as string ?? "";
             if (string.IsNullOrWhiteSpace(className) || className.Length > 60)
                 return ContextUnavailable("Active class name unavailable");
             string character = CharacterId(avatar, renewed);
@@ -335,7 +390,7 @@ internal static class GripEngine
             !AllClasses.Contains(canonical, StringComparer.OrdinalIgnoreCase) ||
             !TryContext(out object? avatar, out GripSnapshot live) ||
             avatar == null) return false;
-        bool renewed = avatar.GetType().Name == "cbn";
+        bool renewed = _renewedCurrent || _renewedLegacy;
         string character = CharacterId(avatar, renewed);
         if (string.IsNullOrWhiteSpace(character) || character.Length > 120)
             return false;
@@ -475,7 +530,11 @@ internal static class GripEngine
         // default presets are generated for unknown classes.
         if (!TryContext(out object? avatar, out GripSnapshot live) ||
             live.Scope != sample.Scope) return;
-        bool renewed = _avatarType?.Name == "cbn";
+        // The new avatar's bgab is a dictionary of inventory metadata
+        // (cxe), not a collection of PlayerClass objects. Do not import
+        // or synthesize other classes from this unrelated dictionary.
+        if (_renewedCurrent) return;
+        bool renewed = _renewedLegacy;
         object? classes = Member(avatar, renewed ? "beck" : "classObjects");
         if (classes is not IEnumerable enumerable) return;
         var names = new HashSet<string>(StringComparer.Ordinal);
@@ -600,7 +659,7 @@ internal static class GripEngine
     private static readonly HashSet<string> FirstImportAttempts = new();
     internal static void TryImportOnFirstMenu()
     {
-        if (!_installed || _ourWrite || _apply == null ||
+        if (_renewedCurrent || !_installed || _ourWrite || _apply == null ||
             !TryContext(out object? avatar, out GripSnapshot ctx) || avatar == null ||
             PresetStore.HasOriginal(ctx.Scope) ||
             !FirstImportAttempts.Add(ctx.Scope)) return;
@@ -637,6 +696,12 @@ internal static class GripEngine
 
     internal static string Load(string id)
     {
+        // The 2026 Spades symbols are verified structurally, NOT
+        // behaviourally. Never modify PlayerPrefs or call a guessed
+        // vanilla apply method until the read-only test is confirmed.
+        if (_renewedCurrent)
+            return RefuseLoad("spades-native-apply-unverified",
+                "Spades changed its weapon adjustment internals. Saving and viewing presets is read-only while we verify the new apply method. Nothing changed.");
         if (!_installed || _apply == null || !TryContext(out object? avatar, out GripSnapshot ctx) ||
             avatar is not Component owner)
             return RefuseLoad("class-not-ready", "Your class isn't ready yet. Close and reopen Settings, then try again. Your grip is unchanged.");
@@ -737,6 +802,8 @@ internal static class GripEngine
 
     internal static string Undo()
     {
+        if (_renewedCurrent)
+            return "Spades native apply is still under verification; existing preferences are unchanged.";
         if (_undo == null || !_installed || _apply == null ||
             !TryContext(out object? avatar, out GripSnapshot current) || avatar == null ||
             _undo.Scope != current.Scope)
